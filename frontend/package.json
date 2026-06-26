@@ -1,0 +1,23 @@
+{
+  "name": "campaignpilot-ai-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "8.x",
+    "typescript": "latest",
+    "react": "19.x",
+    "react-dom": "19.x",
+    "tailwindcss": "4.x"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
+}

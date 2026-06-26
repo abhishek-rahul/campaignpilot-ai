@@ -1,0 +1,1 @@
+"""Brand rule guardrail placeholder."""

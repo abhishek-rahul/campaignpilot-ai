@@ -1,0 +1,1 @@
+"""Observability aggregation placeholder."""

@@ -1,0 +1,488 @@
+Project CampaignPilot_AI {
+  database_type: 'PostgreSQL'
+  Note: 'DBML schema for dbdiagram.io. Elasticsearch vector index is documented separately because dbdiagram.io models relational DBs only.'
+}
+
+Enum campaign_status {
+  DRAFT
+  BRIEF_EXTRACTED
+  CONTEXT_RETRIEVED
+  VARIANTS_GENERATED
+  COMPLIANCE_CHECKED
+  NEEDS_REVIEW
+  APPROVED
+  SENT
+  FAILED
+}
+
+Enum document_status {
+  UPLOADED
+  INGESTING
+  INGESTED
+  FAILED
+}
+
+Enum document_type {
+  BRAND_GUIDELINE
+  PRODUCT_DOC
+  POLICY_DOC
+  OTHER
+}
+
+Enum variant_status {
+  GENERATED
+  COMPLIANCE_PASSED
+  COMPLIANCE_FAILED
+  APPROVED
+  REJECTED
+}
+
+Enum channel_type {
+  TELEGRAM
+  WHATSAPP_MOCK
+  EMAIL
+  SLACK
+}
+
+Enum payload_status {
+  CREATED
+  VALIDATED
+  SENT
+  FAILED
+  MOCK_PAYLOAD_READY
+}
+
+Enum delivery_status {
+  PENDING
+  SENT
+  FAILED
+  MOCK_SENT
+}
+
+Enum approval_status {
+  APPROVED
+  REJECTED
+}
+
+Enum trace_status {
+  SUCCESS
+  FAILED
+}
+
+Table campaign_managers {
+  id varchar [pk]
+  name varchar [not null]
+  email varchar [not null, unique]
+  role varchar [default: 'CAMPAIGN_MANAGER']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+}
+
+Table campaigns {
+  id varchar [pk]
+  campaign_manager_id varchar [not null]
+  campaign_name varchar [not null]
+  goal text
+  target_audience varchar
+  offer_details text
+  tone varchar
+  cta_link text
+  expiry_date date
+  status campaign_status [not null, default: 'DRAFT']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  Indexes {
+    campaign_manager_id
+    status
+    created_at
+  }
+}
+
+Table campaign_briefs {
+  id varchar [pk]
+  campaign_id varchar [not null, unique]
+  goal text
+  target_audience varchar
+  offer_details text
+  tone varchar
+  cta_link text
+  expiry_date date
+  preferred_channels jsonb
+  missing_fields jsonb
+  brief_status varchar [not null, default: 'INCOMPLETE']
+  raw_user_input text
+  structured_json jsonb
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+}
+
+Table conversation_messages {
+  id varchar [pk]
+  campaign_id varchar [not null]
+  sender varchar [not null, note: 'USER or AI or SYSTEM']
+  message_text text [not null]
+  message_type varchar [default: 'CHAT']
+  metadata jsonb
+  created_at timestamp [not null]
+
+  Indexes {
+    campaign_id
+    created_at
+  }
+}
+
+Table brand_documents {
+  id varchar [pk]
+  campaign_id varchar
+  uploaded_by varchar [not null]
+  file_name varchar [not null]
+  file_path text
+  document_type document_type [not null]
+  mime_type varchar
+  status document_status [not null, default: 'UPLOADED']
+  error_message text
+  uploaded_at timestamp [not null]
+  ingested_at timestamp
+
+  Indexes {
+    campaign_id
+    document_type
+    status
+  }
+}
+
+Table document_chunks {
+  id varchar [pk]
+  document_id varchar [not null]
+  chunk_index int [not null]
+  chunk_text text [not null]
+  token_count int
+  metadata jsonb
+  elasticsearch_doc_id varchar [unique, note: 'Document id stored in Elasticsearch vector index']
+  created_at timestamp [not null]
+
+  Indexes {
+    document_id
+    elasticsearch_doc_id
+  }
+}
+
+Table embedding_records {
+  id varchar [pk]
+  chunk_id varchar [not null, unique]
+  embedding_model varchar [not null]
+  vector_dimension int [not null]
+  elasticsearch_index varchar [not null, default: 'campaignpilot_document_chunks']
+  elasticsearch_doc_id varchar [not null]
+  created_at timestamp [not null]
+}
+
+Table retrieved_contexts {
+  id varchar [pk]
+  campaign_id varchar [not null]
+  chunk_id varchar [not null]
+  retrieval_query text [not null]
+  retrieval_score decimal
+  rerank_score decimal
+  rank_position int
+  used_for varchar [note: 'PLAN_GENERATION, VARIANT_GENERATION, COMPLIANCE']
+  created_at timestamp [not null]
+
+  Indexes {
+    campaign_id
+    chunk_id
+    used_for
+  }
+}
+
+Table campaign_plans {
+  id varchar [pk]
+  campaign_id varchar [not null, unique]
+  strategy_summary text
+  audience_insight text
+  recommended_channels jsonb
+  content_angle text
+  plan_json jsonb
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+}
+
+Table message_variants {
+  id varchar [pk]
+  campaign_id varchar [not null]
+  variant_name varchar
+  channel channel_type [not null]
+  message_body text [not null]
+  tone varchar
+  reason text
+  context_references jsonb
+  risk_level varchar
+  status variant_status [not null, default: 'GENERATED']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  Indexes {
+    campaign_id
+    channel
+    status
+  }
+}
+
+Table compliance_results {
+  id varchar [pk]
+  campaign_id varchar [not null]
+  variant_id varchar [not null]
+  overall_passed boolean [not null]
+  risk_level varchar
+  spam_risk jsonb
+  pii_leakage jsonb
+  cta_present jsonb
+  message_length jsonb
+  banned_words jsonb
+  misleading_claim jsonb
+  brand_rule_violation jsonb
+  prompt_injection jsonb
+  suggestions jsonb
+  created_at timestamp [not null]
+
+  Indexes {
+    campaign_id
+    variant_id
+    overall_passed
+  }
+}
+
+Table approvals {
+  id varchar [pk]
+  campaign_id varchar [not null]
+  variant_id varchar [not null]
+  approved_by varchar [not null]
+  approval_status approval_status [not null]
+  comments text
+  created_at timestamp [not null]
+
+  Indexes {
+    campaign_id
+    variant_id
+    approved_by
+  }
+}
+
+Table recipients {
+  id varchar [pk]
+  campaign_id varchar
+  name varchar
+  phone_number varchar
+  telegram_chat_id varchar
+  whatsapp_number varchar
+  email varchar
+  attributes jsonb
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  Indexes {
+    campaign_id
+    telegram_chat_id
+    whatsapp_number
+  }
+}
+
+Table audience_segments {
+  id varchar [pk]
+  campaign_id varchar
+  segment_name varchar [not null]
+  description text
+  filter_rules jsonb
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+}
+
+Table audience_segment_recipients {
+  id varchar [pk]
+  audience_segment_id varchar [not null]
+  recipient_id varchar [not null]
+  created_at timestamp [not null]
+
+  Indexes {
+    (audience_segment_id, recipient_id) [unique]
+  }
+}
+
+Table channels {
+  id varchar [pk]
+  channel_code channel_type [not null, unique]
+  channel_name varchar [not null]
+  is_enabled boolean [not null, default: true]
+  config_json jsonb
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+}
+
+Table channel_payloads {
+  id varchar [pk]
+  campaign_id varchar [not null]
+  variant_id varchar [not null]
+  channel_id varchar [not null]
+  payload_json jsonb [not null]
+  status payload_status [not null, default: 'CREATED']
+  validation_errors jsonb
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  Indexes {
+    campaign_id
+    variant_id
+    channel_id
+    status
+  }
+}
+
+Table delivery_logs {
+  id varchar [pk]
+  campaign_id varchar [not null]
+  variant_id varchar
+  channel_payload_id varchar
+  recipient_id varchar
+  channel_id varchar [not null]
+  status delivery_status [not null, default: 'PENDING']
+  provider_message_id varchar
+  provider_response jsonb
+  error_message text
+  sent_at timestamp
+  created_at timestamp [not null]
+
+  Indexes {
+    campaign_id
+    recipient_id
+    status
+    created_at
+  }
+}
+
+Table memory_profiles {
+  id varchar [pk]
+  campaign_manager_id varchar [not null]
+  brand_tone text
+  approved_style_notes text
+  preferred_channels jsonb
+  memory_json jsonb
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  Indexes {
+    campaign_manager_id
+  }
+}
+
+Table llm_traces {
+  id varchar [pk]
+  campaign_id varchar
+  operation varchar [not null, note: 'BRIEF_EXTRACTION, PLAN_GENERATION, VARIANT_GENERATION, REFINEMENT, EVALUATION']
+  model_name varchar
+  prompt_text text
+  response_text text
+  input_tokens int
+  output_tokens int
+  latency_ms int
+  status trace_status [not null]
+  error_message text
+  metadata jsonb
+  created_at timestamp [not null]
+
+  Indexes {
+    campaign_id
+    operation
+    status
+    created_at
+  }
+}
+
+Table tool_call_logs {
+  id varchar [pk]
+  campaign_id varchar
+  variant_id varchar
+  tool_name varchar [not null]
+  input_json jsonb
+  output_json jsonb
+  status trace_status [not null]
+  latency_ms int
+  error_message text
+  created_at timestamp [not null]
+
+  Indexes {
+    campaign_id
+    variant_id
+    tool_name
+    status
+  }
+}
+
+Table evaluation_runs {
+  id varchar [pk]
+  run_name varchar [not null]
+  campaign_id varchar
+  run_type varchar [not null, note: 'RAG_EVAL, PROMPT_EVAL, TOOL_EVAL, FULL_FLOW_EVAL']
+  status varchar [not null, default: 'CREATED']
+  started_at timestamp
+  completed_at timestamp
+  created_at timestamp [not null]
+}
+
+Table evaluation_results {
+  id varchar [pk]
+  evaluation_run_id varchar [not null]
+  test_case_name varchar [not null]
+  metric_name varchar [not null]
+  score decimal
+  passed boolean
+  expected_output text
+  actual_output text
+  details_json jsonb
+  created_at timestamp [not null]
+
+  Indexes {
+    evaluation_run_id
+    passed
+  }
+}
+
+Ref: campaigns.campaign_manager_id > campaign_managers.id
+Ref: campaign_briefs.campaign_id > campaigns.id
+Ref: conversation_messages.campaign_id > campaigns.id
+
+Ref: brand_documents.campaign_id > campaigns.id
+Ref: brand_documents.uploaded_by > campaign_managers.id
+Ref: document_chunks.document_id > brand_documents.id
+Ref: embedding_records.chunk_id > document_chunks.id
+Ref: retrieved_contexts.campaign_id > campaigns.id
+Ref: retrieved_contexts.chunk_id > document_chunks.id
+
+Ref: campaign_plans.campaign_id > campaigns.id
+Ref: message_variants.campaign_id > campaigns.id
+Ref: compliance_results.campaign_id > campaigns.id
+Ref: compliance_results.variant_id > message_variants.id
+Ref: approvals.campaign_id > campaigns.id
+Ref: approvals.variant_id > message_variants.id
+Ref: approvals.approved_by > campaign_managers.id
+
+Ref: recipients.campaign_id > campaigns.id
+Ref: audience_segments.campaign_id > campaigns.id
+Ref: audience_segment_recipients.audience_segment_id > audience_segments.id
+Ref: audience_segment_recipients.recipient_id > recipients.id
+
+Ref: channel_payloads.campaign_id > campaigns.id
+Ref: channel_payloads.variant_id > message_variants.id
+Ref: channel_payloads.channel_id > channels.id
+Ref: delivery_logs.campaign_id > campaigns.id
+Ref: delivery_logs.variant_id > message_variants.id
+Ref: delivery_logs.channel_payload_id > channel_payloads.id
+Ref: delivery_logs.recipient_id > recipients.id
+Ref: delivery_logs.channel_id > channels.id
+
+Ref: memory_profiles.campaign_manager_id > campaign_managers.id
+Ref: llm_traces.campaign_id > campaigns.id
+Ref: tool_call_logs.campaign_id > campaigns.id
+Ref: tool_call_logs.variant_id > message_variants.id
+Ref: evaluation_runs.campaign_id > campaigns.id
+Ref: evaluation_results.evaluation_run_id > evaluation_runs.id

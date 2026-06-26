@@ -1,0 +1,26 @@
+# Python / uv
+backend/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment
+.env
+backend/.env
+*.env.local
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/package-lock.json
+
+# Runtime data
+uploads/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
