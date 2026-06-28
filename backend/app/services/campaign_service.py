@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ResourceNotFoundError, ValidationError
 from app.core.ids import new_id
 from app.db.repositories import campaign_repository, chat_repository
+from app.llm import llm_client
+from app.observability import trace_service
+from app.rag import rag_pipeline
 from app.schemas.campaign_schema import (
     CampaignBriefData,
     CampaignCreateData,
@@ -18,6 +21,7 @@ from app.schemas.campaign_schema import (
     UpdateCampaignRequest,
 )
 from app.schemas.common_schema import Pagination
+from app.schemas.rag_schema import CampaignPlanData, RetrievedContextListData
 
 
 def create_campaign(db: Session, request: CreateCampaignRequest) -> CampaignCreateData:
@@ -110,6 +114,51 @@ def update_campaign(db: Session, campaign_id: str, request: UpdateCampaignReques
         status=campaign.status,
         updated_at=campaign.updated_at,
     )
+
+
+def get_retrieved_context(db: Session, campaign_id: str, *, refresh: bool = False, top_k: int = 5) -> RetrievedContextListData:
+    if campaign_repository.get_campaign(db, campaign_id) is None:
+        raise ResourceNotFoundError("Campaign not found")
+    contexts = rag_pipeline.list_saved_contexts(db, campaign_id=campaign_id)
+    if refresh or not contexts:
+        _, contexts = rag_pipeline.retrieve_and_save_contexts(
+            db,
+            campaign_id=campaign_id,
+            used_for="CONTEXT_PREVIEW",
+            top_k=top_k,
+        )
+        db.commit()
+    return RetrievedContextListData(campaign_id=campaign_id, contexts=contexts)
+
+
+def generate_campaign_plan(db: Session, campaign_id: str, *, top_k: int = 5) -> CampaignPlanData:
+    campaign = campaign_repository.get_campaign(db, campaign_id)
+    if campaign is None:
+        raise ResourceNotFoundError("Campaign not found")
+    brief = campaign_repository.get_brief_for_campaign(db, campaign_id)
+    if brief is None:
+        raise ValidationError("Campaign brief is required before plan generation", code="BRIEF_REQUIRED")
+    _, contexts = rag_pipeline.retrieve_and_save_contexts(
+        db,
+        campaign_id=campaign_id,
+        used_for="PLAN_GENERATION",
+        top_k=top_k,
+    )
+    brief_payload = brief_data_from_model(brief).model_dump(mode="json")
+    result = llm_client.generate_campaign_plan(
+        campaign_name=campaign.campaign_name,
+        brief=brief_payload,
+        rag_context=rag_pipeline.chunks_to_prompt_context(contexts),
+    )
+    trace_service.record_llm_success(
+        db,
+        campaign_id=campaign_id,
+        operation_name="campaign_plan_generation",
+        result=result,
+        metadata={"context_count": len(contexts)},
+    )
+    db.commit()
+    return CampaignPlanData(campaign_id=campaign_id, plan=result.data.get("plan", {}), retrieved_contexts=contexts)
 
 
 def _campaign_detail(campaign: Any) -> CampaignDetailData:

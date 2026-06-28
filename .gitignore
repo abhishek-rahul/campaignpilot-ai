@@ -3,6 +3,7 @@ backend/.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+backend/.pytest-tmp/
 .mypy_cache/
 .ruff_cache/
 
@@ -10,6 +11,7 @@ __pycache__/
 .env
 backend/.env
 *.env.local
+backend/.env
 
 # Node
 frontend/node_modules/

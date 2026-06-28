@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://campaignpilot:campaignpilot@localhost:5432/campaignpilot"
     elasticsearch_url: str = "http://localhost:9200"
     elasticsearch_document_index: str = "campaignpilot_document_chunks"
+    upload_dir: str = "../uploads/documents"
 
     openai_api_key: str = "replace_me"
     openai_chat_model: str = "gpt-4.1-mini"

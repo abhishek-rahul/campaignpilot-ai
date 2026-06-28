@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from app.core.config import settings
-from app.llm.prompt_builder import build_brief_extraction_prompt, build_variant_generation_prompt
+from app.llm.prompt_builder import build_brief_extraction_prompt, build_campaign_plan_prompt, build_variant_generation_prompt
 from app.llm.structured_output import normalize_brief, normalize_variants, parse_json_object
 
 
@@ -60,6 +60,7 @@ def generate_message_variants(
     cta_link: str | None,
     expiry_date: object,
     variant_count: int,
+    rag_context: list[dict] | None = None,
 ) -> LLMResult:
     prompt = build_variant_generation_prompt(
         campaign_name=campaign_name,
@@ -71,6 +72,7 @@ def generate_message_variants(
         cta_link=cta_link,
         expiry_date=expiry_date,
         variant_count=variant_count,
+        rag_context=rag_context,
     )
     if should_use_mock():
         started = time.perf_counter()
@@ -83,6 +85,7 @@ def generate_message_variants(
             cta_link=cta_link,
             expiry_date=expiry_date,
             variant_count=variant_count,
+            rag_context=rag_context,
         )
         data = {"variants": variants}
         return LLMResult(
@@ -101,6 +104,22 @@ def generate_message_variants(
     )
 
 
+def generate_campaign_plan(*, campaign_name: str, brief: dict[str, Any], rag_context: list[dict]) -> LLMResult:
+    prompt = build_campaign_plan_prompt(campaign_name=campaign_name, brief=brief, rag_context=rag_context)
+    if should_use_mock():
+        started = time.perf_counter()
+        data = {"plan": _mock_campaign_plan(campaign_name=campaign_name, brief=brief, rag_context=rag_context)}
+        return LLMResult(
+            data=data,
+            prompt=prompt,
+            response_text=json.dumps(data, default=str),
+            model_name="mock-llm",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            used_mock=True,
+        )
+    return _call_openai_json(prompt, normalizer="plan")
+
+
 def _call_openai_json(prompt: str, normalizer: str, **kwargs: Any) -> LLMResult:
     started = time.perf_counter()
     try:
@@ -117,7 +136,7 @@ def _call_openai_json(prompt: str, normalizer: str, **kwargs: Any) -> LLMResult:
         parsed = parse_json_object(text)
         if normalizer == "brief":
             data = normalize_brief(parsed)
-        else:
+        elif normalizer == "variants":
             data = {
                 "variants": normalize_variants(
                     parsed,
@@ -125,6 +144,8 @@ def _call_openai_json(prompt: str, normalizer: str, **kwargs: Any) -> LLMResult:
                     fallback_tone=kwargs.get("fallback_tone"),
                 )
             }
+        else:
+            data = {"plan": parsed.get("plan") or parsed}
         usage = completion.usage
         return LLMResult(
             data=data,
@@ -193,12 +214,17 @@ def _mock_variants(
     cta_link: str | None,
     expiry_date: object,
     variant_count: int,
+    rag_context: list[dict] | None = None,
 ) -> list[dict[str, Any]]:
     channels = preferred_channels or ["telegram"]
     offer = offer_details or "your special offer"
     audience = target_audience or "customers"
     expiry_text = f" before {expiry_date}" if expiry_date else ""
     cta = cta_link or "your CTA link"
+    context_hint = ""
+    if rag_context:
+        first = rag_context[0].get("text") or rag_context[0].get("retrieved_text") or ""
+        context_hint = f" Brand note: {first[:90].strip()}."
     templates = [
         ("Friendly Reminder", "Hi there! Your festive offer is live: {offer}{expiry}. Shop now: {cta}"),
         ("Warm Nudge", "We saved something special for {audience}. Get {offer}{expiry}. Tap here: {cta}"),
@@ -214,10 +240,27 @@ def _mock_variants(
             {
                 "variant_name": name,
                 "channel": channel,
-                "message_body": template.format(offer=offer, expiry=expiry_text, cta=cta, audience=audience),
+                "message_body": template.format(offer=offer, expiry=expiry_text, cta=cta, audience=audience) + context_hint,
                 "tone": tone or "friendly",
-                "reason": f"Supports {goal or 'the campaign goal'} with a concise {channel} message.",
+                "reason": f"Supports {goal or 'the campaign goal'} with a concise {channel} message."
+                + (" Uses retrieved document context." if rag_context else ""),
                 "risk_level": "low",
             }
         )
     return variants
+
+
+def _mock_campaign_plan(*, campaign_name: str, brief: dict[str, Any], rag_context: list[dict]) -> dict[str, Any]:
+    context_line = "Use uploaded brand/product guidance where relevant."
+    if rag_context:
+        context_line = (rag_context[0].get("text") or rag_context[0].get("retrieved_text") or context_line)[:180]
+    return {
+        "campaign_summary": f"{campaign_name} campaign for {brief.get('target_audience') or 'the target audience'}.",
+        "target_audience": brief.get("target_audience"),
+        "key_message": f"{brief.get('offer_details') or 'The offer'} is available through the campaign CTA.",
+        "recommended_channels": brief.get("preferred_channels") or [],
+        "offer_positioning": brief.get("offer_details") or "Lead with the clearest customer benefit.",
+        "content_guidelines": [context_line, f"Keep tone {brief.get('tone') or 'clear'}."],
+        "risks_or_constraints": ["Verify claims against uploaded source material before launch."],
+        "next_step": "Generate channel-aware variants with RAG context enabled.",
+    }

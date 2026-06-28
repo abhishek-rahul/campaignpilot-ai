@@ -1,0 +1,16 @@
+GET http://localhost:8000/api/v1/health
+
+# ES GET
+GET http://localhost:9200
+
+POST http://localhost:8000/api/v1/chat/campaign-H "Content-Type: application/json" -d "{\"campaign_id\":null,\"message\":\"Create a festive campaign for inactive customers with 40% discount. Tone should be friendly. Channel should be Telegram and WhatsApp mock. CTA is https://example.com/sale. Offer expires on 30 June.\",\"stream\":false}"
+
+
+
+GET http://localhost:8000/api/v1/campaigns/camp_051abc0cf867
+
+GET http://localhost:8000/api/v1/documents/doc_231f178495ea
+
+
+##
+GET  http://localhost:8000/api/v1/campaigns/camp_051abc0cf867/retrieved-context?refresh=true&top_k=5

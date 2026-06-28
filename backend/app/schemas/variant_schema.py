@@ -28,6 +28,7 @@ class VariantData(BaseModel):
 class GenerateVariantsData(BaseModel):
     campaign_id: str
     variants: list[VariantData]
+    retrieved_contexts: list[dict] = Field(default_factory=list)
 
 
 class VariantListData(BaseModel):
