@@ -1,11 +1,18 @@
 class CampaignPilotError(Exception):
     """Base exception for CampaignPilot AI."""
 
-    def __init__(self, message: str, code: str = "CAMPAIGNPILOT_ERROR", status_code: int = 400):
+    def __init__(
+        self,
+        message: str,
+        code: str = "CAMPAIGNPILOT_ERROR",
+        status_code: int = 400,
+        details: list[dict] | None = None,
+    ):
         super().__init__(message)
         self.message = message
         self.code = code
         self.status_code = status_code
+        self.details = details or []
 
 
 class InvalidStateError(CampaignPilotError):
@@ -18,8 +25,8 @@ class ResourceNotFoundError(CampaignPilotError):
 
 
 class ValidationError(CampaignPilotError):
-    def __init__(self, message: str = "Validation failed"):
-        super().__init__(message, code="VALIDATION_ERROR", status_code=400)
+    def __init__(self, message: str = "Validation failed", code: str = "VALIDATION_ERROR", details: list[dict] | None = None):
+        super().__init__(message, code=code, status_code=400, details=details)
 
 
 class LLMError(CampaignPilotError):

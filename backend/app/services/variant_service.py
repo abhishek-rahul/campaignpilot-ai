@@ -8,6 +8,7 @@ from app.db.repositories import campaign_repository, variant_repository
 from app.llm import llm_client
 from app.llm.llm_client import LLMProviderError
 from app.observability import trace_service
+from app.rag import rag_pipeline
 from app.schemas.variant_schema import (
     GenerateVariantsData,
     GenerateVariantsRequest,
@@ -33,6 +34,17 @@ def generate_variants(db: Session, campaign_id: str, request: GenerateVariantsRe
     if not channels:
         raise ValidationError("At least one supported channel is required")
 
+    retrieved_contexts = []
+    rag_context_payload: list[dict] = []
+    if request.use_rag_context:
+        _, retrieved_contexts = rag_pipeline.retrieve_and_save_contexts(
+            db,
+            campaign_id=campaign_id,
+            used_for="VARIANT_GENERATION",
+            top_k=5,
+        )
+        rag_context_payload = rag_pipeline.chunks_to_prompt_context(retrieved_contexts)
+
     prompt_for_failure = None
     try:
         result = llm_client.generate_message_variants(
@@ -45,6 +57,7 @@ def generate_variants(db: Session, campaign_id: str, request: GenerateVariantsRe
             cta_link=brief.cta_link,
             expiry_date=brief.expiry_date,
             variant_count=request.variant_count,
+            rag_context=rag_context_payload,
         )
         prompt_for_failure = result.prompt
     except LLMProviderError as exc:
@@ -72,7 +85,10 @@ def generate_variants(db: Session, campaign_id: str, request: GenerateVariantsRe
                 "reason": variant.get("reason"),
                 "risk_level": variant.get("risk_level") or "low",
                 "status": "GENERATED",
-                "context_refs": [],
+                "context_refs": [
+                    {"context_id": context.context_id, "chunk_id": context.chunk_id, "document_id": context.document_id}
+                    for context in retrieved_contexts
+                ],
             }
         )
     models = variant_repository.create_variants(db, variant_rows)
@@ -82,10 +98,14 @@ def generate_variants(db: Session, campaign_id: str, request: GenerateVariantsRe
         campaign_id=campaign_id,
         operation_name="variant_generation",
         result=result,
-        metadata={"variant_count": len(models), "channels": channels},
+        metadata={"variant_count": len(models), "channels": channels, "use_rag_context": request.use_rag_context},
     )
     db.commit()
-    return GenerateVariantsData(campaign_id=campaign_id, variants=[variant_data(model) for model in models])
+    return GenerateVariantsData(
+        campaign_id=campaign_id,
+        variants=[variant_data(model) for model in models],
+        retrieved_contexts=[context.model_dump(mode="json") for context in retrieved_contexts],
+    )
 
 
 def list_variants(db: Session, campaign_id: str) -> VariantListData:

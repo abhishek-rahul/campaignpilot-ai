@@ -21,6 +21,7 @@ export type MessageVariant = {
 export type VariantListResponse = {
   campaign_id: string;
   variants: MessageVariant[];
+  retrieved_contexts?: Record<string, unknown>[];
 };
 
 export type GenerateVariantsResponse = VariantListResponse;

@@ -33,14 +33,23 @@ def build_variant_generation_prompt(
     cta_link: str | None,
     expiry_date: date | None,
     variant_count: int,
+    rag_context: list[dict] | None = None,
 ) -> str:
+    guardrail = "Do not use RAG, compliance tools, approvals, delivery, or memory."
+    context_text = ""
+    if rag_context:
+        guardrail = "Do not use compliance tools, approvals, delivery, or memory."
+        snippets = "\n".join(
+            f"- [{item.get('rank_position')}] {item.get('text') or item.get('retrieved_text')}" for item in rag_context[:5]
+        )
+        context_text = f"\nRetrieved brand/product context:\n{snippets}\nUse this context when it is relevant."
     return f"""
 You are CampaignPilot AI. Generate {variant_count} short campaign message variants.
 Return JSON only with key "variants" containing objects with:
 variant_name, channel, message_body, tone, reason, risk_level.
 
 Use only these channels: {preferred_channels}.
-Do not use RAG, compliance tools, approvals, delivery, or memory.
+{guardrail}
 
 Campaign:
 - Name: {campaign_name}
@@ -50,4 +59,23 @@ Campaign:
 - Tone: {tone}
 - CTA: {cta_link}
 - Expiry: {expiry_date}
+{context_text}
+""".strip()
+
+
+def build_campaign_plan_prompt(*, campaign_name: str, brief: dict, rag_context: list[dict]) -> str:
+    snippets = "\n".join(
+        f"- [{item.get('rank_position')}] {item.get('text') or item.get('retrieved_text')}" for item in rag_context[:5]
+    )
+    return f"""
+You are CampaignPilot AI. Create a concise campaign plan using the structured brief and retrieved brand/product context.
+Return JSON only with key "plan" containing:
+campaign_summary, target_audience, key_message, recommended_channels, offer_positioning,
+content_guidelines, risks_or_constraints, next_step.
+
+Campaign name: {campaign_name}
+Brief: {brief}
+
+Retrieved context:
+{snippets or "No retrieved context available."}
 """.strip()

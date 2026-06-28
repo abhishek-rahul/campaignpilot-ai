@@ -16,6 +16,14 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return handleApiResponse<T>(response);
 }
 
+export async function apiPostForm<T>(path: string, body: FormData): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    body
+  });
+  return handleApiResponse<T>(response);
+}
+
 export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: 'PATCH',

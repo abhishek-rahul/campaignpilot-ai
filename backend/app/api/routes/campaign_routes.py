@@ -47,8 +47,14 @@ def get_conversation(campaign_id: str, request: Request, db: Session = Depends(g
 
 
 @router.post("/{campaign_id}/plan")
-def generate_campaign_plan(campaign_id: str, request: Request):
-    return not_implemented_response("Slice 2 - Generate Campaign Plan", request)
+def generate_campaign_plan(
+    campaign_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    top_k: int = Query(5, ge=1, le=10),
+):
+    data = campaign_service.generate_campaign_plan(db, campaign_id, top_k=top_k)
+    return success_response("Campaign plan generated successfully", data.model_dump(mode="json"), request)
 
 
 @router.post("/{campaign_id}/generate-variants")
@@ -69,8 +75,15 @@ def list_variants(campaign_id: str, request: Request, db: Session = Depends(get_
 
 
 @router.get("/{campaign_id}/retrieved-context")
-def get_retrieved_context(campaign_id: str, request: Request):
-    return not_implemented_response("Slice 2 - Get Retrieved Context", request)
+def get_retrieved_context(
+    campaign_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    refresh: bool = False,
+    top_k: int = Query(5, ge=1, le=10),
+):
+    data = campaign_service.get_retrieved_context(db, campaign_id, refresh=refresh, top_k=top_k)
+    return success_response("Retrieved context fetched successfully", data.model_dump(mode="json"), request)
 
 
 @router.post("/{campaign_id}/payloads")

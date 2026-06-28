@@ -12,7 +12,7 @@ pytestmark = pytest.mark.integration
 
 def _database_available() -> bool:
     try:
-        engine = create_engine(settings.database_url, pool_pre_ping=True)
+        engine = create_engine(settings.database_url, pool_pre_ping=True, connect_args={"connect_timeout": 3})
         with engine.connect() as connection:
             connection.execute(text("select 1"))
         return True

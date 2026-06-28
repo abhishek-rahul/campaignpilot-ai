@@ -1,12 +1,20 @@
 import { FormEvent, useState } from 'react';
 
+import { CampaignPlanPanel } from '../components/campaign/CampaignPlanPanel';
 import { CampaignBriefPreview } from '../components/campaign/CampaignBriefPreview';
 import { ChatPanel } from '../components/chat/ChatPanel';
+import { DocumentListPanel } from '../components/documents/DocumentListPanel';
+import { DocumentUploadPanel } from '../components/documents/DocumentUploadPanel';
+import { RetrievedContextPreview } from '../components/rag/RetrievedContextPreview';
 import { VariantCardGrid } from '../components/variants/VariantCardGrid';
+import { generateCampaignPlan, getRetrievedContext } from '../api/campaignApi';
 import { sendCampaignChatMessage } from '../api/chatApi';
+import { ingestDocument, listDocuments, uploadDocument } from '../api/documentApi';
 import { generateCampaignVariants } from '../api/variantApi';
 import type { CampaignBrief } from '../types/campaign';
 import type { ConversationMessage } from '../types/chat';
+import type { DocumentRecord } from '../types/document';
+import type { RetrievedContext } from '../types/rag';
 import type { MessageVariant } from '../types/variant';
 
 const samplePrompt =
@@ -17,9 +25,15 @@ export function CampaignChatPage() {
   const [message, setMessage] = useState(samplePrompt);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [brief, setBrief] = useState<CampaignBrief | null>(null);
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [contexts, setContexts] = useState<RetrievedContext[]>([]);
+  const [plan, setPlan] = useState<Record<string, unknown> | null>(null);
   const [variants, setVariants] = useState<MessageVariant[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isContextLoading, setIsContextLoading] = useState(false);
+  const [isPlanLoading, setIsPlanLoading] = useState(false);
+  const [ingestingDocumentId, setIngestingDocumentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -45,6 +59,7 @@ export function CampaignChatPage() {
       });
       setCampaignId(response.campaign_id);
       setBrief(response.campaign_brief);
+      void refreshDocuments(response.campaign_id);
       setMessages((current) => [
         ...current,
         { ...optimisticUserMessage, message_id: response.conversation_message_id },
@@ -65,7 +80,7 @@ export function CampaignChatPage() {
     }
   }
 
-  async function handleGenerateVariants() {
+  async function handleGenerateVariants(useRagContext = false) {
     if (!campaignId) {
       setError('Create a campaign brief first.');
       return;
@@ -76,14 +91,83 @@ export function CampaignChatPage() {
       const response = await generateCampaignVariants(campaignId, {
         variant_count: 3,
         channels: brief?.preferred_channels.length ? brief.preferred_channels : undefined,
-        use_rag_context: false,
+        use_rag_context: useRagContext,
         use_memory: false
       });
       setVariants(response.variants);
+      if (response.retrieved_contexts?.length) {
+        setContexts(response.retrieved_contexts as RetrievedContext[]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Variant generation failed.');
     } finally {
       setIsGenerating(false);
+    }
+  }
+
+  async function refreshDocuments(nextCampaignId = campaignId) {
+    try {
+      const response = await listDocuments(nextCampaignId);
+      setDocuments(response.items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Document list failed.');
+    }
+  }
+
+  async function handleUploadDocument(file: File, documentType: string) {
+    if (!campaignId) {
+      setError('Create a campaign before uploading campaign-specific documents.');
+      return;
+    }
+    setError(null);
+    try {
+      const uploaded = await uploadDocument({ file, documentType, campaignId });
+      setDocuments((current) => [uploaded, ...current.filter((item) => item.document_id !== uploaded.document_id)]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Document upload failed.');
+    }
+  }
+
+  async function handleIngestDocument(documentId: string) {
+    setIngestingDocumentId(documentId);
+    setError(null);
+    try {
+      await ingestDocument(documentId);
+      await refreshDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Document ingestion failed.');
+      await refreshDocuments();
+    } finally {
+      setIngestingDocumentId(null);
+    }
+  }
+
+  async function handleRefreshContext() {
+    if (!campaignId) return;
+    setIsContextLoading(true);
+    setError(null);
+    try {
+      const response = await getRetrievedContext(campaignId, true);
+      setContexts(response.contexts);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Context retrieval failed.');
+    } finally {
+      setIsContextLoading(false);
+    }
+  }
+
+  async function handleGeneratePlan() {
+    if (!campaignId) return;
+    setIsPlanLoading(true);
+    setError(null);
+    try {
+      const response = await generateCampaignPlan(campaignId);
+      setPlan(response.plan);
+      setContexts(response.retrieved_contexts);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Campaign plan failed.');
+    } finally {
+      setIsPlanLoading(false);
     }
   }
 
@@ -108,11 +192,19 @@ export function CampaignChatPage() {
           </button>
           <button
             type="button"
-            onClick={handleGenerateVariants}
+            onClick={() => void handleGenerateVariants(false)}
             disabled={!canGenerate || isGenerating}
             style={{ padding: '10px 14px' }}
           >
             {isGenerating ? 'Generating...' : 'Generate Variants'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleGenerateVariants(true)}
+            disabled={!canGenerate || isGenerating}
+            style={{ padding: '10px 14px' }}
+          >
+            {isGenerating ? 'Generating...' : 'Generate Variants with RAG'}
           </button>
           {campaignId && <span style={{ alignSelf: 'center', color: '#5d6675' }}>Campaign: {campaignId}</span>}
         </div>
@@ -122,6 +214,21 @@ export function CampaignChatPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
         <ChatPanel messages={messages} />
         <CampaignBriefPreview brief={brief} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+        <DocumentUploadPanel disabled={!campaignId} onUpload={handleUploadDocument} />
+        <DocumentListPanel documents={documents} onIngest={handleIngestDocument} loadingDocumentId={ingestingDocumentId} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+        <RetrievedContextPreview
+          contexts={contexts}
+          onRefresh={handleRefreshContext}
+          disabled={!campaignId}
+          loading={isContextLoading}
+        />
+        <CampaignPlanPanel plan={plan} onGenerate={handleGeneratePlan} disabled={!campaignId} loading={isPlanLoading} />
       </div>
 
       <VariantCardGrid variants={variants} />

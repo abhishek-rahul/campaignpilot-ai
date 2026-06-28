@@ -50,7 +50,7 @@ app.include_router(evaluation_routes.router, prefix=prefix)
 def campaignpilot_exception_handler(request: Request, exc: CampaignPilotError):
     return JSONResponse(
         status_code=exc.status_code,
-        content=error_response(exc.message, exc.code, request=request),
+        content=error_response(exc.message, exc.code, details=exc.details, request=request),
     )
 
 
