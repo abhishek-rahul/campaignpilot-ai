@@ -6,7 +6,9 @@ Implemented the first vertical slice: campaign chat creates or updates a campaig
 
 ## 2. User-visible Features
 
-- Campaign Chat page accepts a campaign idea.
+- Campaign Chat page accepts a campaign idea and auto-creates a campaign on first `Send to AI`.
+- The UI does not require a separate Create Campaign step for the main Slice 1 flow.
+- Follow-up chat messages reuse the returned `campaign_id`, so conversation rows continue under the same campaign.
 - Extracted brief preview shows goal, audience, offer, tone, channels, CTA, expiry, status, and missing fields.
 - Generate Variants button creates channel-aware variant cards.
 - Variant cards show name, channel, message body, tone, reason, risk level, and status.
@@ -89,8 +91,11 @@ Result: passed.
 
 - No auth yet; Slice 1 uses a default local campaign manager.
 - Mock LLM is deterministic and intentionally simple.
+- Multi-turn chat is stored and displayed, but the LLM prompt does not yet use full previous conversation history as memory.
+- Sending a later short instruction such as "tone professional kar do" may overwrite/re-extract from that message instead of intelligently merging with the existing brief.
 - Real OpenAI JSON quality still depends on provider output, with parser validation around it.
 - DB-backed API tests require Postgres and `uv run alembic upgrade head`.
+- If running backend from the host machine, `DATABASE_URL` must use a host-resolvable DB name such as `localhost`; the Docker service name `postgres` resolves inside Docker only.
 - Future-slice routes remain placeholders.
 
 ## 10. Next Slice Handoff

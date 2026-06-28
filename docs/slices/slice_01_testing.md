@@ -60,11 +60,31 @@ curl http://localhost:8000/api/v1/health
 
 Chat campaign:
 
+Git Bash recommended form:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat/campaign \
+  -H "Content-Type: application/json" \
+  -d '{"campaign_id":null,"message":"Create a festive campaign for inactive customers with 25% discount. Tone should be friendly. Channel should be Telegram and WhatsApp mock. CTA is https://example.com/sale. Offer expires on 30 June.","stream":false}'
+```
+
+PowerShell or escaped double-quote form:
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat/campaign \
   -H "Content-Type: application/json" \
   -d "{\"campaign_id\":null,\"message\":\"Create a festive campaign for inactive customers with 25% discount. Tone should be friendly. Channel should be Telegram and WhatsApp mock. CTA is https://example.com/sale. Offer expires on 30 June.\",\"stream\":false}"
 ```
+
+Continue an existing campaign chat:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat/campaign \
+  -H "Content-Type: application/json" \
+  -d '{"campaign_id":"camp_xxx","message":"Make the tone more professional.","stream":false}'
+```
+
+`campaign_id` must be quoted because it is a JSON string. Bare `camp_xxx` causes a JSON decode error.
 
 Create campaign directly:
 
@@ -162,11 +182,15 @@ Error:
 1. Start backend after migrations.
 2. Start frontend with `npm run dev`.
 3. Open `http://localhost:5173`.
-4. Submit the manual test prompt.
-5. Confirm chat history shows user and AI messages.
-6. Confirm brief preview is complete.
-7. Click Generate Variants.
-8. Confirm variant cards render.
+4. Paste or keep the manual test prompt in the Campaign idea box.
+5. Click `Send to AI`.
+6. Confirm a campaign ID appears on the page.
+7. Confirm chat history shows user and AI messages.
+8. Confirm brief preview is complete.
+9. Click Generate Variants.
+10. Confirm variant cards render.
+
+There is no separate Create Campaign button in the Slice 1 UI. The first chat request sends `campaign_id: null`, and the backend creates the campaign automatically.
 
 ## Verify DB Rows
 
@@ -193,6 +217,8 @@ In mock mode, trace metadata should include `"used_mock": true`.
 
 - `uv` not found: install uv or add it to PATH.
 - Missing tables: run `uv run alembic upgrade head`.
+- Host-side DB connection fails with `getaddrinfo failed`: `backend/.env` may be using `postgres` as the host. That name works inside Docker; use `localhost` when running backend commands directly on the host.
 - API key missing: this is okay for Slice 1; mock fallback should run.
 - Real OpenAI errors: check `llm_traces` for failed trace rows.
 - Variant generation returns brief incomplete: send a chat message with goal, audience, offer, tone, channel, CTA, and expiry.
+- JSON decode error near `campaign_id`: quote existing IDs as `"camp_xxx"` or use `null` for a new campaign.
