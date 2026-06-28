@@ -85,7 +85,15 @@ npm run build
 
 Result: passed.
 
-`uv` was not available on this shell PATH, so the required uv commands could not be executed here. Plain `python -m pytest` could not collect tests in this shell because the global Python environment does not have FastAPI/OpenAI dependencies installed. Use the documented uv flow for the real backend test gate.
+Backend verification:
+- uv sync --extra dev: passed
+- uv run alembic upgrade head: passed
+- uv run python -m compileall app: passed
+- uv run python -m pytest: passed
+
+Frontend verification:
+- npm install: passed
+- npm run build: passed
 
 ## 9. Known Limitations
 
