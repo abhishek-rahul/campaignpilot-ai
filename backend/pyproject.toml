@@ -37,3 +37,6 @@ package = false
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  "integration: tests that require a configured database"
+]
