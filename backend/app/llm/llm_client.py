@@ -1,1 +1,223 @@
-"""LLM wrapper. LangChain/OpenAI usage must stay behind this file."""
+from __future__ import annotations
+
+import json
+import re
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from app.core.config import settings
+from app.llm.prompt_builder import build_brief_extraction_prompt, build_variant_generation_prompt
+from app.llm.structured_output import normalize_brief, normalize_variants, parse_json_object
+
+
+@dataclass
+class LLMResult:
+    data: dict[str, Any]
+    prompt: str
+    response_text: str
+    model_name: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: int = 0
+    used_mock: bool = False
+
+
+class LLMProviderError(RuntimeError):
+    pass
+
+
+def should_use_mock() -> bool:
+    key = (settings.openai_api_key or "").strip()
+    return key == "" or key == "replace_me"
+
+
+def extract_campaign_brief(message: str) -> LLMResult:
+    prompt = build_brief_extraction_prompt(message)
+    if should_use_mock():
+        started = time.perf_counter()
+        data = _mock_brief(message)
+        return LLMResult(
+            data=data,
+            prompt=prompt,
+            response_text=json.dumps(data, default=str),
+            model_name="mock-llm",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            used_mock=True,
+        )
+    return _call_openai_json(prompt, normalizer="brief", message=message)
+
+
+def generate_message_variants(
+    *,
+    campaign_name: str,
+    goal: str | None,
+    target_audience: str | None,
+    offer_details: str | None,
+    tone: str | None,
+    preferred_channels: list[str],
+    cta_link: str | None,
+    expiry_date: object,
+    variant_count: int,
+) -> LLMResult:
+    prompt = build_variant_generation_prompt(
+        campaign_name=campaign_name,
+        goal=goal,
+        target_audience=target_audience,
+        offer_details=offer_details,
+        tone=tone,
+        preferred_channels=preferred_channels,
+        cta_link=cta_link,
+        expiry_date=expiry_date,
+        variant_count=variant_count,
+    )
+    if should_use_mock():
+        started = time.perf_counter()
+        variants = _mock_variants(
+            goal=goal,
+            target_audience=target_audience,
+            offer_details=offer_details,
+            tone=tone,
+            preferred_channels=preferred_channels,
+            cta_link=cta_link,
+            expiry_date=expiry_date,
+            variant_count=variant_count,
+        )
+        data = {"variants": variants}
+        return LLMResult(
+            data=data,
+            prompt=prompt,
+            response_text=json.dumps(data, default=str),
+            model_name="mock-llm",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            used_mock=True,
+        )
+    return _call_openai_json(
+        prompt,
+        normalizer="variants",
+        fallback_channels=preferred_channels,
+        fallback_tone=tone,
+    )
+
+
+def _call_openai_json(prompt: str, normalizer: str, **kwargs: Any) -> LLMResult:
+    started = time.perf_counter()
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=settings.openai_api_key)
+        completion = client.chat.completions.create(
+            model=settings.openai_chat_model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.3,
+        )
+        text = completion.choices[0].message.content or "{}"
+        parsed = parse_json_object(text)
+        if normalizer == "brief":
+            data = normalize_brief(parsed)
+        else:
+            data = {
+                "variants": normalize_variants(
+                    parsed,
+                    fallback_channels=kwargs.get("fallback_channels") or [],
+                    fallback_tone=kwargs.get("fallback_tone"),
+                )
+            }
+        usage = completion.usage
+        return LLMResult(
+            data=data,
+            prompt=prompt,
+            response_text=text,
+            model_name=settings.openai_chat_model,
+            input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
+            output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise LLMProviderError("LLM provider failed") from exc
+
+
+def _mock_brief(message: str) -> dict[str, Any]:
+    lower = message.lower()
+    channels: list[str] = []
+    if "telegram" in lower:
+        channels.append("telegram")
+    if "whatsapp" in lower:
+        channels.append("whatsapp_mock")
+    if not channels:
+        channels = ["telegram"]
+
+    cta_match = re.search(r"https?://\S+", message)
+    expiry = None
+    date_match = re.search(r"(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)", lower)
+    if date_match:
+        year_match = re.search(r"\b(20\d{2})\b", lower)
+        year = int(year_match.group(1)) if year_match else datetime.now().year
+        expiry = datetime.strptime(f"{date_match.group(1)} {date_match.group(2)} {year}", "%d %B %Y").date()
+
+    offer_match = re.search(r"(\d+%\s+discount)", lower)
+    offer = offer_match.group(1) if offer_match else None
+    tone = "friendly" if "friendly" in lower else ("professional" if "professional" in lower else None)
+    target = "inactive customers" if "inactive" in lower and "customer" in lower else None
+    goal = "Reactivate inactive customers" if target else "Promote campaign offer"
+    if "festive" in lower:
+        campaign_name = "Festive Reactivation Campaign"
+    else:
+        campaign_name = "CampaignPilot Draft Campaign"
+
+    data = normalize_brief(
+        {
+            "campaign_name": campaign_name,
+            "goal": goal,
+            "target_audience": target,
+            "offer_details": offer,
+            "tone": tone,
+            "preferred_channels": channels,
+            "cta_link": cta_match.group(0).rstrip(".") if cta_match else None,
+            "expiry_date": expiry,
+            "missing_fields": [],
+        }
+    )
+    return data
+
+
+def _mock_variants(
+    *,
+    goal: str | None,
+    target_audience: str | None,
+    offer_details: str | None,
+    tone: str | None,
+    preferred_channels: list[str],
+    cta_link: str | None,
+    expiry_date: object,
+    variant_count: int,
+) -> list[dict[str, Any]]:
+    channels = preferred_channels or ["telegram"]
+    offer = offer_details or "your special offer"
+    audience = target_audience or "customers"
+    expiry_text = f" before {expiry_date}" if expiry_date else ""
+    cta = cta_link or "your CTA link"
+    templates = [
+        ("Friendly Reminder", "Hi there! Your festive offer is live: {offer}{expiry}. Shop now: {cta}"),
+        ("Warm Nudge", "We saved something special for {audience}. Get {offer}{expiry}. Tap here: {cta}"),
+        ("Clear CTA", "Ready to come back? Enjoy {offer}{expiry}. Start here: {cta}"),
+        ("Short Promo", "A friendly deal is waiting: {offer}{expiry}. {cta}"),
+        ("Festive Push", "Celebrate with us again. Claim {offer}{expiry}: {cta}"),
+    ]
+    variants: list[dict[str, Any]] = []
+    for index in range(variant_count):
+        name, template = templates[index % len(templates)]
+        channel = channels[index % len(channels)]
+        variants.append(
+            {
+                "variant_name": name,
+                "channel": channel,
+                "message_body": template.format(offer=offer, expiry=expiry_text, cta=cta, audience=audience),
+                "tone": tone or "friendly",
+                "reason": f"Supports {goal or 'the campaign goal'} with a concise {channel} message.",
+                "risk_level": "low",
+            }
+        )
+    return variants

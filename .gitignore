@@ -24,3 +24,7 @@ uploads/
 .DS_Store
 .idea/
 .vscode/
+
+# others
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
