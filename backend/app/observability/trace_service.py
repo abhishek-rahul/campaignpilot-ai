@@ -16,10 +16,10 @@ def record_llm_success(
     operation_name: str,
     result: LLMResult,
     metadata: dict[str, Any] | None = None,
-) -> None:
+) -> str:
     meta = metadata.copy() if metadata else {}
     meta["used_mock"] = result.used_mock
-    llm_trace_repository.create_trace(
+    trace = llm_trace_repository.create_trace(
         db,
         trace_id=new_id("trace"),
         campaign_id=campaign_id,
@@ -33,6 +33,7 @@ def record_llm_success(
         status="SUCCESS",
         metadata=meta,
     )
+    return trace.id
 
 
 def record_llm_failure(
@@ -44,8 +45,8 @@ def record_llm_failure(
     prompt: str | None,
     error_message: str,
     metadata: dict[str, Any] | None = None,
-) -> None:
-    llm_trace_repository.create_trace(
+) -> str:
+    trace = llm_trace_repository.create_trace(
         db,
         trace_id=new_id("trace"),
         campaign_id=campaign_id,
@@ -57,3 +58,4 @@ def record_llm_failure(
         error_message=error_message,
         metadata=metadata or {},
     )
+    return trace.id

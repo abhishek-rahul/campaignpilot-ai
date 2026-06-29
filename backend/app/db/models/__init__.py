@@ -1,6 +1,7 @@
 from app.db.models.campaign_brief_model import CampaignBrief
 from app.db.models.campaign_manager_model import CampaignManager
 from app.db.models.campaign_model import Campaign
+from app.db.models.campaign_refinement_model import CampaignRefinement
 from app.db.models.channel_payload_model import ChannelPayload
 from app.db.models.conversation_message_model import ConversationMessage
 from app.db.models.brand_document_model import BrandDocument
@@ -20,6 +21,7 @@ __all__ = [
     "Campaign",
     "CampaignBrief",
     "CampaignManager",
+    "CampaignRefinement",
     "ChannelPayload",
     "ComplianceResult",
     "ConversationMessage",

@@ -5,8 +5,9 @@ from app.api.dependencies import get_db
 from app.core.response import success_response
 from app.schemas.approval_schema import ApproveVariantRequest, RejectVariantRequest
 from app.schemas.compliance_schema import ComplianceCheckRequest
+from app.schemas.refinement_schema import RefineVariantRequest
 from app.schemas.variant_schema import UpdateVariantRequest
-from app.services import approval_service, compliance_service, variant_service
+from app.services import approval_service, compliance_service, refinement_service, variant_service
 
 router = APIRouter(prefix="/variants", tags=["variants"])
 
@@ -15,6 +16,17 @@ router = APIRouter(prefix="/variants", tags=["variants"])
 def update_variant(variant_id: str, payload: UpdateVariantRequest, request: Request, db: Session = Depends(get_db)):
     data = variant_service.update_variant(db, variant_id, payload)
     return success_response("Variant updated successfully", data.model_dump(mode="json"), request)
+
+
+@router.post("/{variant_id}/refine")
+def refine_variant(
+    variant_id: str,
+    payload: RefineVariantRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    data = refinement_service.refine_variant(db, variant_id, payload)
+    return success_response("Variant refinement generated successfully", data.model_dump(mode="json"), request)
 
 
 @router.post("/{variant_id}/compliance-check")

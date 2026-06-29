@@ -10,15 +10,25 @@ import { DeliveryLogPanel } from '../components/delivery/DeliveryLogPanel';
 import { PayloadGenerationPanel } from '../components/payloads/PayloadGenerationPanel';
 import { PayloadPreviewPanel } from '../components/payloads/PayloadPreviewPanel';
 import { PayloadReadinessPanel } from '../components/payloads/PayloadReadinessPanel';
+import { BriefRefinementPanel } from '../components/refinements/BriefRefinementPanel';
+import { RefinementHistoryPanel } from '../components/refinements/RefinementHistoryPanel';
+import { VariantRefinementPanel } from '../components/refinements/VariantRefinementPanel';
 import { RetrievedContextPreview } from '../components/rag/RetrievedContextPreview';
+import { StreamingChatPanel } from '../components/chat/StreamingChatPanel';
 import { VariantCardGrid } from '../components/variants/VariantCardGrid';
 import { generateCampaignPlan, getCampaignComplianceSummary, getRetrievedContext } from '../api/campaignApi';
 import { approveVariant, rejectVariant } from '../api/approvalApi';
-import { sendCampaignChatMessage } from '../api/chatApi';
+import { sendCampaignChatMessage, sendCampaignChatMessageStream } from '../api/chatApi';
 import { runVariantComplianceCheck } from '../api/complianceApi';
 import { listCampaignDeliveryLogs, sendPayload } from '../api/deliveryApi';
 import { ingestDocument, listDocuments, uploadDocument } from '../api/documentApi';
 import { generateChannelPayloads, getPayloadReadiness, listCampaignPayloads } from '../api/payloadApi';
+import {
+  listCampaignRefinements,
+  refineCampaignBrief,
+  refineMessageVariant,
+  regenerateCampaignVariants
+} from '../api/refinementApi';
 import { generateCampaignVariants } from '../api/variantApi';
 import type { CampaignBrief } from '../types/campaign';
 import type { ConversationMessage } from '../types/chat';
@@ -27,6 +37,7 @@ import type { DeliveryLog } from '../types/delivery';
 import type { ChannelPayload, PayloadReadiness } from '../types/payload';
 import type { RetrievedContext } from '../types/rag';
 import type { CampaignComplianceSummary as ComplianceSummary, ComplianceResult } from '../types/compliance';
+import type { RefineBriefResponse, RefinementRecord } from '../types/refinement';
 import type { MessageVariant } from '../types/variant';
 
 const samplePrompt =
@@ -46,13 +57,19 @@ export function CampaignChatPage() {
   const [payloadReadiness, setPayloadReadiness] = useState<PayloadReadiness | null>(null);
   const [payloads, setPayloads] = useState<ChannelPayload[]>([]);
   const [deliveryLogs, setDeliveryLogs] = useState<DeliveryLog[]>([]);
+  const [refinements, setRefinements] = useState<RefinementRecord[]>([]);
+  const [latestBriefRefinement, setLatestBriefRefinement] = useState<RefineBriefResponse | null>(null);
+  const [streamingText, setStreamingText] = useState('');
   const [selectedPayloadChannels, setSelectedPayloadChannels] = useState<string[]>(['telegram', 'whatsapp_mock']);
   const [regeneratePayloads, setRegeneratePayloads] = useState(false);
   const [busyVariantId, setBusyVariantId] = useState<string | null>(null);
   const [isPayloadGenerating, setIsPayloadGenerating] = useState(false);
   const [sendingPayloadId, setSendingPayloadId] = useState<string | null>(null);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isRefiningBrief, setIsRefiningBrief] = useState(false);
+  const [isRefiningVariant, setIsRefiningVariant] = useState(false);
   const [isContextLoading, setIsContextLoading] = useState(false);
   const [isPlanLoading, setIsPlanLoading] = useState(false);
   const [ingestingDocumentId, setIngestingDocumentId] = useState<string | null>(null);
@@ -83,6 +100,7 @@ export function CampaignChatPage() {
       setBrief(response.campaign_brief);
       void refreshDocuments(response.campaign_id);
       void refreshPayloadState(response.campaign_id);
+      void refreshRefinements(response.campaign_id);
       setMessages((current) => [
         ...current,
         { ...optimisticUserMessage, message_id: response.conversation_message_id },
@@ -100,6 +118,61 @@ export function CampaignChatPage() {
       setError(err instanceof Error ? err.message : 'Campaign chat failed.');
     } finally {
       setIsChatLoading(false);
+    }
+  }
+
+  async function handleStreamingSubmit() {
+    if (!message.trim()) {
+      setError('Please enter a campaign message.');
+      return;
+    }
+    const messageText = message.trim();
+    const optimisticUserMessage: ConversationMessage = {
+      message_id: `local_stream_${Date.now()}`,
+      sender: 'CAMPAIGN_MANAGER',
+      message_text: messageText,
+      message_type: 'text',
+      created_at: new Date().toISOString()
+    };
+    setIsStreaming(true);
+    setStreamingText('');
+    setError(null);
+    setMessages((current) => [...current, optimisticUserMessage]);
+    try {
+      await sendCampaignChatMessageStream({ campaign_id: campaignId, message: messageText, stream: true }, (streamEvent) => {
+        if (streamEvent.event === 'token') {
+          setStreamingText((current) => `${current}${streamEvent.data.text}`);
+        }
+        if (streamEvent.event === 'brief_delta') {
+          setBrief(streamEvent.data.campaign_brief);
+        }
+        if (streamEvent.event === 'final') {
+          setCampaignId(streamEvent.data.campaign_id);
+          setBrief(streamEvent.data.campaign_brief);
+          setMessages((current) => [
+            ...current.filter((item) => item.message_id !== optimisticUserMessage.message_id),
+            { ...optimisticUserMessage, message_id: streamEvent.data.conversation_message_id },
+            {
+              message_id: streamEvent.data.ai_message_id,
+              sender: 'AI_AGENT',
+              message_text: streamEvent.data.ai_reply,
+              message_type: 'text',
+              created_at: new Date().toISOString()
+            }
+          ]);
+          void refreshDocuments(streamEvent.data.campaign_id);
+          void refreshPayloadState(streamEvent.data.campaign_id);
+          void refreshRefinements(streamEvent.data.campaign_id);
+          setMessage('');
+        }
+        if (streamEvent.event === 'error') {
+          setError(streamEvent.data.message);
+        }
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Streaming chat failed.');
+    } finally {
+      setIsStreaming(false);
     }
   }
 
@@ -153,6 +226,16 @@ export function CampaignChatPage() {
       setDeliveryLogs(deliveryResponse.delivery_logs);
     } catch {
       setPayloadReadiness(null);
+    }
+  }
+
+  async function refreshRefinements(nextCampaignId = campaignId) {
+    if (!nextCampaignId) return;
+    try {
+      const response = await listCampaignRefinements(nextCampaignId);
+      setRefinements(response.refinements);
+    } catch {
+      setRefinements([]);
     }
   }
 
@@ -323,6 +406,65 @@ export function CampaignChatPage() {
     }
   }
 
+  async function handleRefineBrief(feedback: string, useRagContext: boolean, apply: boolean) {
+    if (!campaignId) return;
+    setIsRefiningBrief(true);
+    setError(null);
+    try {
+      const response = await refineCampaignBrief(campaignId, {
+        feedback,
+        use_rag_context: useRagContext,
+        apply
+      });
+      setLatestBriefRefinement(response);
+      setBrief(response.after_brief);
+      await refreshRefinements(campaignId);
+      await refreshPayloadState(campaignId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Brief refinement failed.');
+    } finally {
+      setIsRefiningBrief(false);
+    }
+  }
+
+  async function handleRefineVariant(variantId: string, feedback: string, useRagContext: boolean) {
+    setIsRefiningVariant(true);
+    setError(null);
+    try {
+      const response = await refineMessageVariant(variantId, {
+        feedback,
+        use_rag_context: useRagContext,
+        create_new_variant: true
+      });
+      setVariants((current) => [...current, response.refined_variant]);
+      await refreshRefinements(response.campaign_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Variant refinement failed.');
+    } finally {
+      setIsRefiningVariant(false);
+    }
+  }
+
+  async function handleRegenerateVariantsFromFeedback(feedback: string, useRagContext: boolean) {
+    if (!campaignId) return;
+    setIsRefiningVariant(true);
+    setError(null);
+    try {
+      const response = await regenerateCampaignVariants(campaignId, {
+        feedback,
+        variant_count: 3,
+        channels: brief?.preferred_channels.length ? brief.preferred_channels : undefined,
+        use_rag_context: useRagContext
+      });
+      setVariants((current) => [...current, ...response.variants]);
+      await refreshRefinements(campaignId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Variant regeneration failed.');
+    } finally {
+      setIsRefiningVariant(false);
+    }
+  }
+
   const canGenerate = Boolean(campaignId && brief?.brief_status === 'COMPLETE');
 
   return (
@@ -341,6 +483,14 @@ export function CampaignChatPage() {
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
           <button type="submit" disabled={isChatLoading} style={{ padding: '10px 14px' }}>
             {isChatLoading ? 'Sending...' : 'Send to AI'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleStreamingSubmit()}
+            disabled={isStreaming || isChatLoading}
+            style={{ padding: '10px 14px' }}
+          >
+            {isStreaming ? 'Streaming...' : 'Send with Streaming'}
           </button>
           <button
             type="button"
@@ -368,6 +518,8 @@ export function CampaignChatPage() {
         <CampaignBriefPreview brief={brief} />
       </div>
 
+      <StreamingChatPanel text={streamingText} active={isStreaming} />
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
         <DocumentUploadPanel disabled={!campaignId} onUpload={handleUploadDocument} />
         <DocumentListPanel documents={documents} onIngest={handleIngestDocument} loadingDocumentId={ingestingDocumentId} />
@@ -393,6 +545,24 @@ export function CampaignChatPage() {
         onApprove={handleApproveVariant}
         onReject={handleRejectVariant}
       />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+        <BriefRefinementPanel
+          disabled={!campaignId || !brief}
+          loading={isRefiningBrief}
+          result={latestBriefRefinement}
+          onSubmit={handleRefineBrief}
+        />
+        <VariantRefinementPanel
+          variants={variants}
+          disabled={!campaignId || !brief}
+          loading={isRefiningVariant}
+          onRefineVariant={handleRefineVariant}
+          onRegenerateVariants={handleRegenerateVariantsFromFeedback}
+        />
+      </div>
+
+      <RefinementHistoryPanel refinements={refinements} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
         <PayloadReadinessPanel readiness={payloadReadiness} />

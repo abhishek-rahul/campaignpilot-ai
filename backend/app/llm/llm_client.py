@@ -8,7 +8,13 @@ from datetime import datetime
 from typing import Any
 
 from app.core.config import settings
-from app.llm.prompt_builder import build_brief_extraction_prompt, build_campaign_plan_prompt, build_variant_generation_prompt
+from app.llm.prompt_builder import (
+    build_brief_extraction_prompt,
+    build_brief_refinement_prompt,
+    build_campaign_plan_prompt,
+    build_variant_generation_prompt,
+    build_variant_refinement_prompt,
+)
 from app.llm.structured_output import normalize_brief, normalize_variants, parse_json_object
 
 
@@ -120,6 +126,50 @@ def generate_campaign_plan(*, campaign_name: str, brief: dict[str, Any], rag_con
     return _call_openai_json(prompt, normalizer="plan")
 
 
+def refine_campaign_brief(*, current_brief: dict[str, Any], feedback: str, rag_context: list[dict] | None = None) -> LLMResult:
+    prompt = build_brief_refinement_prompt(current_brief=current_brief, feedback=feedback, rag_context=rag_context)
+    if should_use_mock():
+        started = time.perf_counter()
+        data = _mock_refined_brief(current_brief=current_brief, feedback=feedback)
+        return LLMResult(
+            data=data,
+            prompt=prompt,
+            response_text=json.dumps(data, default=str),
+            model_name="mock-llm",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            used_mock=True,
+        )
+    return _call_openai_json(prompt, normalizer="brief")
+
+
+def refine_message_variant(
+    *,
+    current_brief: dict[str, Any],
+    source_variant: dict[str, Any],
+    feedback: str,
+    rag_context: list[dict] | None = None,
+) -> LLMResult:
+    prompt = build_variant_refinement_prompt(
+        current_brief=current_brief,
+        source_variant=source_variant,
+        feedback=feedback,
+        rag_context=rag_context,
+    )
+    if should_use_mock():
+        started = time.perf_counter()
+        data = {"variant": _mock_refined_variant(source_variant=source_variant, feedback=feedback)}
+        return LLMResult(
+            data=data,
+            prompt=prompt,
+            response_text=json.dumps(data, default=str),
+            model_name="mock-llm",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            used_mock=True,
+        )
+    result = _call_openai_json(prompt, normalizer="variant", fallback_channels=[source_variant.get("channel")], fallback_tone=source_variant.get("tone"))
+    return result
+
+
 def _call_openai_json(prompt: str, normalizer: str, **kwargs: Any) -> LLMResult:
     started = time.perf_counter()
     try:
@@ -144,6 +194,14 @@ def _call_openai_json(prompt: str, normalizer: str, **kwargs: Any) -> LLMResult:
                     fallback_tone=kwargs.get("fallback_tone"),
                 )
             }
+        elif normalizer == "variant":
+            variant_payload = parsed.get("variant") if isinstance(parsed.get("variant"), dict) else parsed
+            variants = normalize_variants(
+                {"variants": [variant_payload]},
+                fallback_channels=kwargs.get("fallback_channels") or [],
+                fallback_tone=kwargs.get("fallback_tone"),
+            )
+            data = {"variant": variants[0]}
         else:
             data = {"plan": parsed.get("plan") or parsed}
         usage = completion.usage
@@ -263,4 +321,38 @@ def _mock_campaign_plan(*, campaign_name: str, brief: dict[str, Any], rag_contex
         "content_guidelines": [context_line, f"Keep tone {brief.get('tone') or 'clear'}."],
         "risks_or_constraints": ["Verify claims against uploaded source material before launch."],
         "next_step": "Generate channel-aware variants with RAG context enabled.",
+    }
+
+
+def _mock_refined_brief(*, current_brief: dict[str, Any], feedback: str) -> dict[str, Any]:
+    refined = dict(current_brief)
+    lower = feedback.lower()
+    if "premium" in lower:
+        refined["tone"] = "premium"
+    if "inactive" in lower:
+        refined["target_audience"] = "inactive customers"
+    if "less pushy" in lower or "reduce urgency" in lower or "softer" in lower:
+        refined["tone"] = refined.get("tone") or "friendly"
+        refined["ai_reply"] = "I refined the brief to use softer urgency."
+    else:
+        refined["ai_reply"] = "I refined the campaign brief."
+    return normalize_brief(refined)
+
+
+def _mock_refined_variant(*, source_variant: dict[str, Any], feedback: str) -> dict[str, Any]:
+    lower = feedback.lower()
+    body = source_variant.get("message_body") or ""
+    if "shorter" in lower:
+        body = body.split(".")[0][:160].strip() or body[:160]
+    if "less pushy" in lower or "reduce urgency" in lower or "softer" in lower:
+        body = body.replace("Hurry", "When you're ready").replace("Last chance", "A friendly reminder")
+    if "premium" in lower:
+        body = f"An exclusive update for you: {body}"
+    return {
+        "variant_name": f"Refined {source_variant.get('variant_name') or 'Variant'}",
+        "channel": source_variant.get("channel") or "telegram",
+        "message_body": body,
+        "tone": "premium" if "premium" in lower else (source_variant.get("tone") or "friendly"),
+        "reason": f"Refined based on feedback: {feedback}",
+        "risk_level": "low",
     }
