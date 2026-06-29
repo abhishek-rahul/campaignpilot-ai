@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from app.db.models import LLMTrace
 
@@ -44,3 +45,23 @@ def create_trace(
     db.flush()
     db.refresh(trace)
     return trace
+
+
+def get_trace(db: Session, trace_id: str) -> LLMTrace | None:
+    return db.get(LLMTrace, trace_id)
+
+
+def list_traces(
+    db: Session,
+    campaign_id: str,
+    *,
+    operation_name: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+) -> list[LLMTrace]:
+    stmt = select(LLMTrace).where(LLMTrace.campaign_id == campaign_id)
+    if operation_name:
+        stmt = stmt.where(LLMTrace.operation_name == operation_name)
+    if status:
+        stmt = stmt.where(LLMTrace.status == status)
+    return list(db.scalars(stmt.order_by(LLMTrace.created_at.desc(), LLMTrace.id.desc()).limit(limit)).all())

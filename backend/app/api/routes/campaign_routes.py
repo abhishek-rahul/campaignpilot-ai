@@ -7,7 +7,16 @@ from app.schemas.campaign_schema import CreateCampaignRequest, UpdateCampaignReq
 from app.schemas.payload_schema import GeneratePayloadsRequest
 from app.schemas.refinement_schema import RefineBriefRequest, RegenerateVariantsRequest
 from app.schemas.variant_schema import GenerateVariantsRequest
-from app.services import campaign_service, channel_service, chat_service, delivery_service, refinement_service, variant_service
+from app.services import (
+    campaign_service,
+    channel_service,
+    chat_service,
+    delivery_service,
+    evaluation_service,
+    observability_service,
+    refinement_service,
+    variant_service,
+)
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -46,6 +55,41 @@ def update_campaign(campaign_id: str, payload: UpdateCampaignRequest, request: R
 def get_conversation(campaign_id: str, request: Request, db: Session = Depends(get_db)):
     data = chat_service.get_conversation(db, campaign_id)
     return success_response("Conversation fetched successfully", data.model_dump(mode="json"), request)
+
+
+@router.get("/{campaign_id}/observability-summary")
+def get_observability_summary(campaign_id: str, request: Request, db: Session = Depends(get_db)):
+    data = observability_service.get_campaign_summary(db, campaign_id)
+    return success_response("Campaign observability summary fetched successfully", data.model_dump(mode="json"), request)
+
+
+@router.get("/{campaign_id}/debug-timeline")
+def get_debug_timeline(campaign_id: str, request: Request, db: Session = Depends(get_db)):
+    data = observability_service.get_debug_timeline(db, campaign_id)
+    return success_response("Campaign debug timeline fetched successfully", data.model_dump(mode="json"), request)
+
+
+@router.get("/{campaign_id}/evaluations")
+def list_campaign_evaluations(
+    campaign_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    evaluation_type: str | None = None,
+    variant_id: str | None = None,
+):
+    data = evaluation_service.list_campaign_evaluations(
+        db,
+        campaign_id,
+        evaluation_type=evaluation_type,
+        variant_id=variant_id,
+    )
+    return success_response("Campaign evaluations fetched successfully", data.model_dump(mode="json"), request)
+
+
+@router.post("/{campaign_id}/evaluate-readiness")
+def evaluate_campaign_readiness(campaign_id: str, request: Request, db: Session = Depends(get_db)):
+    data = evaluation_service.evaluate_campaign_readiness(db, campaign_id)
+    return success_response("Campaign readiness evaluation completed successfully", data.model_dump(mode="json"), request)
 
 
 @router.post("/{campaign_id}/refine-brief")
@@ -180,10 +224,38 @@ def get_delivery_logs(
 
 
 @router.get("/{campaign_id}/llm-traces")
-def get_llm_traces(campaign_id: str, request: Request):
-    return not_implemented_response("Slice 6 - Get LLM Traces", request)
+def get_llm_traces(
+    campaign_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    operation_name: str | None = None,
+    status: str | None = None,
+    limit: int = Query(50, ge=1, le=100),
+):
+    data = observability_service.list_campaign_llm_traces(
+        db,
+        campaign_id,
+        operation_name=operation_name,
+        status=status,
+        limit=limit,
+    )
+    return success_response("LLM traces fetched successfully", data.model_dump(mode="json"), request)
 
 
 @router.get("/{campaign_id}/tool-calls")
-def get_tool_calls(campaign_id: str, request: Request):
-    return not_implemented_response("Slice 6 - Get Tool Calls", request)
+def get_tool_calls(
+    campaign_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    tool_name: str | None = None,
+    status: str | None = None,
+    limit: int = Query(50, ge=1, le=100),
+):
+    data = observability_service.list_campaign_tool_calls(
+        db,
+        campaign_id,
+        tool_name=tool_name,
+        status=status,
+        limit=limit,
+    )
+    return success_response("Tool call logs fetched successfully", data.model_dump(mode="json"), request)
