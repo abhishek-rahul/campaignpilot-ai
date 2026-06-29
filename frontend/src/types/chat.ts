@@ -28,3 +28,10 @@ export type ConversationResponse = {
   campaign_id: string;
   messages: ConversationMessage[];
 };
+
+export type CampaignChatStreamEvent =
+  | { event: 'start'; data: { request_id: string; campaign_id: string | null } }
+  | { event: 'token'; data: { text: string } }
+  | { event: 'brief_delta'; data: { campaign_brief: CampaignBrief } }
+  | { event: 'final'; data: CampaignChatResponse & { llm_trace_id?: string | null } }
+  | { event: 'error'; data: { code: string; message: string } };

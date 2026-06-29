@@ -5,8 +5,9 @@ from app.api.dependencies import get_db
 from app.core.response import not_implemented_response, success_response
 from app.schemas.campaign_schema import CreateCampaignRequest, UpdateCampaignRequest
 from app.schemas.payload_schema import GeneratePayloadsRequest
+from app.schemas.refinement_schema import RefineBriefRequest, RegenerateVariantsRequest
 from app.schemas.variant_schema import GenerateVariantsRequest
-from app.services import campaign_service, channel_service, chat_service, delivery_service, variant_service
+from app.services import campaign_service, channel_service, chat_service, delivery_service, refinement_service, variant_service
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -45,6 +46,45 @@ def update_campaign(campaign_id: str, payload: UpdateCampaignRequest, request: R
 def get_conversation(campaign_id: str, request: Request, db: Session = Depends(get_db)):
     data = chat_service.get_conversation(db, campaign_id)
     return success_response("Conversation fetched successfully", data.model_dump(mode="json"), request)
+
+
+@router.post("/{campaign_id}/refine-brief")
+def refine_campaign_brief(
+    campaign_id: str,
+    payload: RefineBriefRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    data = refinement_service.refine_brief(db, campaign_id, payload)
+    return success_response("Campaign brief refinement generated successfully", data.model_dump(mode="json"), request)
+
+
+@router.post("/{campaign_id}/regenerate-variants")
+def regenerate_variants(
+    campaign_id: str,
+    payload: RegenerateVariantsRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    data = refinement_service.regenerate_variants(db, campaign_id, payload)
+    return success_response("Message variants regenerated successfully", data.model_dump(mode="json"), request)
+
+
+@router.get("/{campaign_id}/refinements")
+def list_campaign_refinements(
+    campaign_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    refinement_type: str | None = None,
+    source_type: str | None = None,
+):
+    data = refinement_service.list_refinements(
+        db,
+        campaign_id,
+        refinement_type=refinement_type,
+        source_type=source_type,
+    )
+    return success_response("Campaign refinements fetched successfully", data.model_dump(mode="json"), request)
 
 
 @router.post("/{campaign_id}/plan")

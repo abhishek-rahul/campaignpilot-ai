@@ -79,3 +79,49 @@ Brief: {brief}
 Retrieved context:
 {snippets or "No retrieved context available."}
 """.strip()
+
+
+def build_brief_refinement_prompt(*, current_brief: dict, feedback: str, rag_context: list[dict] | None = None) -> str:
+    snippets = "\n".join(
+        f"- [{item.get('rank_position')}] {item.get('text') or item.get('retrieved_text')}" for item in (rag_context or [])[:5]
+    )
+    return f"""
+You are CampaignPilot AI. Refine the existing structured campaign brief using the user's feedback.
+Return JSON only with the same brief keys:
+campaign_name, goal, target_audience, offer_details, tone, preferred_channels,
+cta_link, expiry_date, missing_fields, ai_reply.
+
+Preserve useful existing fields unless the feedback clearly changes them.
+
+Current brief:
+{current_brief}
+
+User feedback:
+{feedback}
+
+Retrieved context:
+{snippets or "No retrieved context available."}
+""".strip()
+
+
+def build_variant_refinement_prompt(*, current_brief: dict, source_variant: dict, feedback: str, rag_context: list[dict] | None = None) -> str:
+    snippets = "\n".join(
+        f"- [{item.get('rank_position')}] {item.get('text') or item.get('retrieved_text')}" for item in (rag_context or [])[:5]
+    )
+    return f"""
+You are CampaignPilot AI. Refine one generated campaign variant using the user's feedback.
+Return JSON only with keys: variant_name, channel, message_body, tone, reason, risk_level.
+Keep the same channel unless feedback clearly requires a different supported channel.
+
+Current brief:
+{current_brief}
+
+Source variant:
+{source_variant}
+
+User feedback:
+{feedback}
+
+Retrieved context:
+{snippets or "No retrieved context available."}
+""".strip()
