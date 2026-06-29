@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.response import not_implemented_response, success_response
 from app.schemas.campaign_schema import CreateCampaignRequest, UpdateCampaignRequest
+from app.schemas.payload_schema import GeneratePayloadsRequest
 from app.schemas.variant_schema import GenerateVariantsRequest
-from app.services import campaign_service, chat_service, variant_service
+from app.services import campaign_service, channel_service, chat_service, delivery_service, variant_service
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -92,14 +93,33 @@ def get_compliance_summary(campaign_id: str, request: Request, db: Session = Dep
     return success_response("Campaign compliance summary fetched successfully", data.model_dump(mode="json"), request)
 
 
+@router.get("/{campaign_id}/payload-readiness")
+def get_payload_readiness(campaign_id: str, request: Request, db: Session = Depends(get_db)):
+    data = channel_service.get_payload_readiness(db, campaign_id)
+    return success_response("Payload readiness fetched successfully", data.model_dump(mode="json"), request)
+
+
 @router.post("/{campaign_id}/payloads")
-def generate_payloads(campaign_id: str, request: Request):
-    return not_implemented_response("Slice 4 - Generate Channel Payloads", request)
+def generate_payloads(
+    campaign_id: str,
+    payload: GeneratePayloadsRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    data = channel_service.generate_payloads(db, campaign_id, payload)
+    return success_response("Channel payloads generated successfully", data.model_dump(mode="json"), request)
 
 
 @router.get("/{campaign_id}/payloads")
-def list_payloads(campaign_id: str, request: Request):
-    return not_implemented_response("Slice 4 - List Channel Payloads", request)
+def list_payloads(
+    campaign_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    channel: str | None = None,
+    status: str | None = None,
+):
+    data = channel_service.list_payloads(db, campaign_id, channel=channel, status=status)
+    return success_response("Channel payloads fetched successfully", data.model_dump(mode="json"), request)
 
 
 @router.post("/{campaign_id}/send")
@@ -108,8 +128,15 @@ def send_campaign(campaign_id: str, request: Request):
 
 
 @router.get("/{campaign_id}/delivery-logs")
-def get_delivery_logs(campaign_id: str, request: Request):
-    return not_implemented_response("Slice 4 - Get Delivery Logs", request)
+def get_delivery_logs(
+    campaign_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    channel: str | None = None,
+    status: str | None = None,
+):
+    data = delivery_service.list_delivery_logs(db, campaign_id, channel=channel, status=status)
+    return success_response("Delivery logs fetched successfully", data.model_dump(mode="json"), request)
 
 
 @router.get("/{campaign_id}/llm-traces")
