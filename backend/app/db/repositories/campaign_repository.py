@@ -89,6 +89,13 @@ def update_campaign_status(db: Session, campaign: Campaign, status: str) -> Camp
     return campaign
 
 
+def select_variant(db: Session, campaign: Campaign, variant_id: str) -> Campaign:
+    campaign.selected_variant_id = variant_id
+    db.flush()
+    db.refresh(campaign)
+    return campaign
+
+
 def count_total_pages(total_items: int, page_size: int) -> int:
     if total_items == 0:
         return 0

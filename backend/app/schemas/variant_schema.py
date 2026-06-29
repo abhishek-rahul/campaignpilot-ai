@@ -21,6 +21,8 @@ class VariantData(BaseModel):
     reason: str | None = None
     risk_level: str | None = None
     status: str
+    latest_compliance_status: str | None = None
+    latest_compliance_result_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

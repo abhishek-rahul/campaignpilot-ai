@@ -1,20 +1,24 @@
 import { FormEvent, useState } from 'react';
 
 import { CampaignPlanPanel } from '../components/campaign/CampaignPlanPanel';
+import { CampaignComplianceSummary } from '../components/campaign/CampaignComplianceSummary';
 import { CampaignBriefPreview } from '../components/campaign/CampaignBriefPreview';
 import { ChatPanel } from '../components/chat/ChatPanel';
 import { DocumentListPanel } from '../components/documents/DocumentListPanel';
 import { DocumentUploadPanel } from '../components/documents/DocumentUploadPanel';
 import { RetrievedContextPreview } from '../components/rag/RetrievedContextPreview';
 import { VariantCardGrid } from '../components/variants/VariantCardGrid';
-import { generateCampaignPlan, getRetrievedContext } from '../api/campaignApi';
+import { generateCampaignPlan, getCampaignComplianceSummary, getRetrievedContext } from '../api/campaignApi';
+import { approveVariant, rejectVariant } from '../api/approvalApi';
 import { sendCampaignChatMessage } from '../api/chatApi';
+import { runVariantComplianceCheck } from '../api/complianceApi';
 import { ingestDocument, listDocuments, uploadDocument } from '../api/documentApi';
 import { generateCampaignVariants } from '../api/variantApi';
 import type { CampaignBrief } from '../types/campaign';
 import type { ConversationMessage } from '../types/chat';
 import type { DocumentRecord } from '../types/document';
 import type { RetrievedContext } from '../types/rag';
+import type { CampaignComplianceSummary as ComplianceSummary, ComplianceResult } from '../types/compliance';
 import type { MessageVariant } from '../types/variant';
 
 const samplePrompt =
@@ -29,6 +33,9 @@ export function CampaignChatPage() {
   const [contexts, setContexts] = useState<RetrievedContext[]>([]);
   const [plan, setPlan] = useState<Record<string, unknown> | null>(null);
   const [variants, setVariants] = useState<MessageVariant[]>([]);
+  const [complianceByVariantId, setComplianceByVariantId] = useState<Record<string, ComplianceResult>>({});
+  const [complianceSummary, setComplianceSummary] = useState<ComplianceSummary | null>(null);
+  const [busyVariantId, setBusyVariantId] = useState<string | null>(null);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isContextLoading, setIsContextLoading] = useState(false);
@@ -95,6 +102,7 @@ export function CampaignChatPage() {
         use_memory: false
       });
       setVariants(response.variants);
+      await refreshComplianceSummary(campaignId);
       if (response.retrieved_contexts?.length) {
         setContexts(response.retrieved_contexts as RetrievedContext[]);
       }
@@ -102,6 +110,77 @@ export function CampaignChatPage() {
       setError(err instanceof Error ? err.message : 'Variant generation failed.');
     } finally {
       setIsGenerating(false);
+    }
+  }
+
+  async function refreshComplianceSummary(nextCampaignId = campaignId) {
+    if (!nextCampaignId) return;
+    try {
+      const response = await getCampaignComplianceSummary(nextCampaignId);
+      setComplianceSummary(response);
+    } catch {
+      setComplianceSummary(null);
+    }
+  }
+
+  async function handleRunCompliance(variantId: string) {
+    setBusyVariantId(variantId);
+    setError(null);
+    try {
+      const result = await runVariantComplianceCheck(variantId, { use_rag_context: true, include_llm_explanation: false });
+      setComplianceByVariantId((current) => ({ ...current, [variantId]: result }));
+      setVariants((current) =>
+        current.map((variant) =>
+          variant.variant_id === variantId
+            ? {
+                ...variant,
+                risk_level: result.risk_level,
+                status: result.status === 'FAILED' ? 'COMPLIANCE_FAILED' : 'COMPLIANCE_PASSED',
+                latest_compliance_status: result.status,
+                latest_compliance_result_id: result.compliance_result_id
+              }
+            : variant
+        )
+      );
+      await refreshComplianceSummary();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Compliance check failed.');
+    } finally {
+      setBusyVariantId(null);
+    }
+  }
+
+  async function handleApproveVariant(variantId: string, reason: string | null, allowHighRiskOverride: boolean) {
+    setBusyVariantId(variantId);
+    setError(null);
+    try {
+      const response = await approveVariant(variantId, { reason, allow_high_risk_override: allowHighRiskOverride });
+      setVariants((current) =>
+        current.map((variant) => (variant.variant_id === variantId ? { ...variant, status: response.new_status } : variant))
+      );
+      await refreshComplianceSummary();
+      return response;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Variant approval failed.');
+    } finally {
+      setBusyVariantId(null);
+    }
+  }
+
+  async function handleRejectVariant(variantId: string, reason: string | null) {
+    setBusyVariantId(variantId);
+    setError(null);
+    try {
+      const response = await rejectVariant(variantId, { reason });
+      setVariants((current) =>
+        current.map((variant) => (variant.variant_id === variantId ? { ...variant, status: response.new_status } : variant))
+      );
+      await refreshComplianceSummary();
+      return response;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Variant rejection failed.');
+    } finally {
+      setBusyVariantId(null);
     }
   }
 
@@ -231,7 +310,16 @@ export function CampaignChatPage() {
         <CampaignPlanPanel plan={plan} onGenerate={handleGeneratePlan} disabled={!campaignId} loading={isPlanLoading} />
       </div>
 
-      <VariantCardGrid variants={variants} />
+      <CampaignComplianceSummary summary={complianceSummary} />
+
+      <VariantCardGrid
+        variants={variants}
+        complianceByVariantId={complianceByVariantId}
+        busyVariantId={busyVariantId}
+        onRunCompliance={handleRunCompliance}
+        onApprove={handleApproveVariant}
+        onReject={handleRejectVariant}
+      />
     </section>
   );
 }

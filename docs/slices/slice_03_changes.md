@@ -1,63 +1,128 @@
-# Slice 03 Changes - Compliance Tools + Approval
+# Slice 03 Changes - Compliance Guardrails + Human Approval
 
-## 1. Goal
+## Summary
 
-Describe the exact goal of this slice.
+Slice 3 adds deterministic compliance guardrails and human approval/rejection for generated variants. It keeps Slice 1 chat/variant generation and Slice 2 RAG flows backward compatible.
 
-## 2. Implemented Backend Files
+## User-Visible Features
 
-- `backend/app/...`
+- Run compliance check on each generated variant.
+- View compliance status, risk level, issues, and recommendation on variant cards.
+- Approve variants that passed or have warnings.
+- Reject variants with a reason.
+- See campaign-level compliance summary counts.
 
-## 3. Implemented Frontend Files
+## Backend Changes
 
-- `frontend/src/...`
+- Implemented variant compliance check, compliance history, approve, and reject endpoints.
+- Added campaign compliance summary endpoint.
+- Added deterministic compliance rules for misleading claims, aggressive urgency, expiry clarity, CTA presence, offer consistency, excessive emoji, channel fit, and brand context awareness.
+- Added internal tool-call logging for each rule execution.
+- Added approval workflow that blocks failed variants unless explicit override is provided.
 
-## 4. Database Changes
+## Frontend Changes
 
-- Migration files added:
-- Tables/entities introduced:
-- Seed data added:
+- Added per-variant compliance panel.
+- Added Run Compliance Check, Approve, and Reject controls.
+- Added compact campaign compliance summary.
+- Added Slice 3 API helpers and TypeScript types.
 
-## 5. API Contract Changes
+## DB / Migration Changes
 
-Mention whether the implementation follows `docs/architecture/07_API_Contract_CampaignPilot_AI_v3.docx` exactly.
+Migration added:
 
-## 6. Environment / Config Changes
+- `backend/alembic/versions/003_slice_3_compliance_approval.py`
 
-Mention new environment variables or Docker changes.
+Tables introduced:
 
-## 7. Testing Steps
+- `compliance_results`
+- `approvals`
+- `tool_call_logs`
 
-### Backend automated checks
+No delivery, channel payload, scheduling, memory, evaluation, or observability dashboard tables were added.
+
+## API Contract Implemented
+
+All new non-streaming endpoints use the standard `success`, `message`, `data`, `error`, `meta` envelope.
+
+Implemented:
+
+- `POST /api/v1/variants/{variant_id}/compliance-check`
+- `GET /api/v1/variants/{variant_id}/compliance-checks`
+- `POST /api/v1/variants/{variant_id}/approve`
+- `POST /api/v1/variants/{variant_id}/reject`
+- `GET /api/v1/campaigns/{campaign_id}/compliance-summary`
+
+## Compliance / Guardrail Components Implemented
+
+- Deterministic rule functions in `backend/app/tools/compliance_rules.py`.
+- Rule runner and aggregate scoring in `backend/app/tools/guardrail_runner.py`.
+- Tool execution metadata saved to `tool_call_logs`.
+- No external legal/compliance API is used.
+
+## Approval Workflow Details
+
+- Approval requires a latest compliance result.
+- `PASSED` and `WARNING` can be approved.
+- `FAILED` is blocked unless `allow_high_risk_override=true`.
+- Approving sets variant status to `APPROVED`, sets `campaigns.selected_variant_id`, and updates campaign status to `APPROVED`.
+- Rejecting sets variant status to `REJECTED` and stores an audit row.
+- Approval does not send campaign or generate channel payloads.
+
+## Testing Evidence
+
+Local evidence:
 
 ```bash
 cd backend
-pytest
+.\.venv\Scripts\python.exe -m compileall app
 ```
 
-### Frontend automated checks
+Passed.
+
+```bash
+cd backend
+.\.venv\Scripts\python.exe -m pytest --basetemp <Windows temp>\campaignpilot-pytest
+```
+
+Environment override used for host testing:
+
+```powershell
+$env:DATABASE_URL='postgresql+psycopg://campaignpilot:campaignpilot@localhost:5432/campaignpilot'
+$env:OPENAI_API_KEY='replace_me'
+```
+
+Result: `32 passed, 1 warning`.
 
 ```bash
 cd frontend
+npm install
 npm run build
 ```
 
-### Manual testing
+Passed.
 
-1. Start services using `docker compose up --build`.
-2. Open backend health URL: `http://localhost:8000/api/v1/health`.
-3. Open frontend URL: `http://localhost:5173`.
-4. Test this slice's main happy path.
-5. Test at least one validation/error case.
+Docker-backed migration and smoke evidence:
 
-## 8. Test Evidence
+```bash
+docker compose up -d --build
+docker compose exec backend uv run alembic upgrade head
+curl http://localhost:8000/api/v1/health
+curl http://localhost:9200
+```
 
-Paste API responses, screenshots, or logs here.
+Passed.
 
-## 9. Known Issues
+Host limitation: `uv sync --extra dev` could not be run directly on Windows because `uv` was not available on the host PATH. Docker backend build used `uv sync --no-dev`, and Docker `uv run alembic upgrade head` succeeded.
 
-- None yet.
+## Known Limitations
 
-## 10. Next Slice Notes
+- Guardrails are deterministic MVP checks, not legal advice.
+- No external compliance vendor integration.
+- No LLM compliance judge is enabled in Slice 3.
+- No Telegram/WhatsApp payload generation or sending.
+- Tool call logs are persisted but not exposed through the Slice 6 observability endpoint yet.
 
-Mention anything the next slice should know.
+## Next Slice Handoff
+
+Slice 4 can require `campaign.status=APPROVED` and `campaigns.selected_variant_id` before generating channel payloads or sending Telegram messages.

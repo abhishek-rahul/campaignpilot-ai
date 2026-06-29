@@ -40,3 +40,26 @@ def update_variant_fields(db: Session, variant: MessageVariant, fields: dict[str
     db.flush()
     db.refresh(variant)
     return updated
+
+
+def update_variant_status(db: Session, variant: MessageVariant, status: str) -> MessageVariant:
+    variant.status = status
+    db.flush()
+    db.refresh(variant)
+    return variant
+
+
+def update_variant_risk_and_status(
+    db: Session,
+    variant: MessageVariant,
+    *,
+    risk_level: str | None = None,
+    status: str | None = None,
+) -> MessageVariant:
+    if risk_level is not None:
+        variant.risk_level = risk_level
+    if status is not None:
+        variant.status = status
+    db.flush()
+    db.refresh(variant)
+    return variant

@@ -14,6 +14,8 @@ export type MessageVariant = {
   reason: string | null;
   risk_level: string | null;
   status: string;
+  latest_compliance_status?: string | null;
+  latest_compliance_result_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };

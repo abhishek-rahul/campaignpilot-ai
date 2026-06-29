@@ -86,6 +86,12 @@ def get_retrieved_context(
     return success_response("Retrieved context fetched successfully", data.model_dump(mode="json"), request)
 
 
+@router.get("/{campaign_id}/compliance-summary")
+def get_compliance_summary(campaign_id: str, request: Request, db: Session = Depends(get_db)):
+    data = campaign_service.get_compliance_summary(db, campaign_id)
+    return success_response("Campaign compliance summary fetched successfully", data.model_dump(mode="json"), request)
+
+
 @router.post("/{campaign_id}/payloads")
 def generate_payloads(campaign_id: str, request: Request):
     return not_implemented_response("Slice 4 - Generate Channel Payloads", request)

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import LLMError, ResourceNotFoundError, ValidationError
 from app.core.ids import new_id
 from app.db.repositories import campaign_repository, variant_repository
+from app.db.repositories import compliance_repository
 from app.llm import llm_client
 from app.llm.llm_client import LLMProviderError
 from app.observability import trace_service
@@ -112,9 +113,17 @@ def list_variants(db: Session, campaign_id: str) -> VariantListData:
     campaign = campaign_repository.get_campaign(db, campaign_id)
     if campaign is None:
         raise ResourceNotFoundError("Campaign not found")
+    latest_results = compliance_repository.latest_results_for_campaign(db, campaign_id)
     return VariantListData(
         campaign_id=campaign_id,
-        variants=[variant_data(model) for model in variant_repository.list_variants(db, campaign_id)],
+        variants=[
+            variant_data(
+                model,
+                latest_compliance_status=latest_results[model.id].status if model.id in latest_results else None,
+                latest_compliance_result_id=latest_results[model.id].id if model.id in latest_results else None,
+            )
+            for model in variant_repository.list_variants(db, campaign_id)
+        ],
     )
 
 
@@ -136,7 +145,12 @@ def update_variant(db: Session, variant_id: str, request: UpdateVariantRequest) 
     )
 
 
-def variant_data(model: object) -> VariantData:
+def variant_data(
+    model: object,
+    *,
+    latest_compliance_status: str | None = None,
+    latest_compliance_result_id: str | None = None,
+) -> VariantData:
     return VariantData(
         variant_id=model.id,
         variant_name=model.variant_name,
@@ -146,6 +160,8 @@ def variant_data(model: object) -> VariantData:
         reason=model.reason,
         risk_level=model.risk_level,
         status=model.status,
+        latest_compliance_status=latest_compliance_status,
+        latest_compliance_result_id=latest_compliance_result_id,
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
