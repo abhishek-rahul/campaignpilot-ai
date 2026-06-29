@@ -6,6 +6,7 @@ import type {
   CreateCampaignRequest
 } from '../types/campaign';
 import type { CampaignPlanResponse, RetrievedContextResponse } from '../types/rag';
+import type { CampaignComplianceSummary } from '../types/compliance';
 
 export function createCampaign(payload: CreateCampaignRequest): Promise<CampaignCreateData> {
   return apiPost<CampaignCreateData>('/campaigns', payload);
@@ -28,4 +29,8 @@ export function getRetrievedContext(campaignId: string, refresh = false): Promis
 
 export function generateCampaignPlan(campaignId: string): Promise<CampaignPlanResponse> {
   return apiPost<CampaignPlanResponse>(`/campaigns/${campaignId}/plan`);
+}
+
+export function getCampaignComplianceSummary(campaignId: string): Promise<CampaignComplianceSummary> {
+  return apiGet<CampaignComplianceSummary>(`/campaigns/${campaignId}/compliance-summary`);
 }

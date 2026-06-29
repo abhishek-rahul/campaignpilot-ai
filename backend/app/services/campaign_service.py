@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ResourceNotFoundError, ValidationError
 from app.core.ids import new_id
-from app.db.repositories import campaign_repository, chat_repository
+from app.db.repositories import approval_repository, campaign_repository, chat_repository, compliance_repository, variant_repository
 from app.llm import llm_client
 from app.observability import trace_service
 from app.rag import rag_pipeline
@@ -22,6 +22,7 @@ from app.schemas.campaign_schema import (
 )
 from app.schemas.common_schema import Pagination
 from app.schemas.rag_schema import CampaignPlanData, RetrievedContextListData
+from app.schemas.compliance_schema import CampaignComplianceSummaryData, VariantComplianceSummaryItem
 
 
 def create_campaign(db: Session, request: CreateCampaignRequest) -> CampaignCreateData:
@@ -159,6 +160,40 @@ def generate_campaign_plan(db: Session, campaign_id: str, *, top_k: int = 5) -> 
     )
     db.commit()
     return CampaignPlanData(campaign_id=campaign_id, plan=result.data.get("plan", {}), retrieved_contexts=contexts)
+
+
+def get_compliance_summary(db: Session, campaign_id: str) -> CampaignComplianceSummaryData:
+    campaign = campaign_repository.get_campaign(db, campaign_id)
+    if campaign is None:
+        raise ResourceNotFoundError("Campaign not found")
+    variants = variant_repository.list_variants(db, campaign_id)
+    latest_results = compliance_repository.latest_results_for_campaign(db, campaign_id)
+    items: list[VariantComplianceSummaryItem] = []
+    for variant in variants:
+        latest = latest_results.get(variant.id)
+        approval = approval_repository.latest_approval_for_variant(db, variant.id)
+        items.append(
+            VariantComplianceSummaryItem(
+                variant_id=variant.id,
+                variant_name=variant.variant_name,
+                channel=variant.channel,
+                variant_status=variant.status,
+                risk_level=variant.risk_level,
+                latest_compliance_status=latest.status if latest else None,
+                latest_compliance_result_id=latest.id if latest else None,
+                approval_status=approval.approval_status if approval else None,
+            )
+        )
+    return CampaignComplianceSummaryData(
+        campaign_id=campaign_id,
+        variants_summary=items,
+        total_variants=len(items),
+        passed_count=sum(1 for item in items if item.latest_compliance_status == "PASSED"),
+        warning_count=sum(1 for item in items if item.latest_compliance_status == "WARNING"),
+        failed_count=sum(1 for item in items if item.latest_compliance_status == "FAILED"),
+        approved_count=sum(1 for item in items if item.variant_status == "APPROVED"),
+        rejected_count=sum(1 for item in items if item.variant_status == "REJECTED"),
+    )
 
 
 def _campaign_detail(campaign: Any) -> CampaignDetailData:
