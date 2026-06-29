@@ -6,17 +6,25 @@ import { CampaignBriefPreview } from '../components/campaign/CampaignBriefPrevie
 import { ChatPanel } from '../components/chat/ChatPanel';
 import { DocumentListPanel } from '../components/documents/DocumentListPanel';
 import { DocumentUploadPanel } from '../components/documents/DocumentUploadPanel';
+import { DeliveryLogPanel } from '../components/delivery/DeliveryLogPanel';
+import { PayloadGenerationPanel } from '../components/payloads/PayloadGenerationPanel';
+import { PayloadPreviewPanel } from '../components/payloads/PayloadPreviewPanel';
+import { PayloadReadinessPanel } from '../components/payloads/PayloadReadinessPanel';
 import { RetrievedContextPreview } from '../components/rag/RetrievedContextPreview';
 import { VariantCardGrid } from '../components/variants/VariantCardGrid';
 import { generateCampaignPlan, getCampaignComplianceSummary, getRetrievedContext } from '../api/campaignApi';
 import { approveVariant, rejectVariant } from '../api/approvalApi';
 import { sendCampaignChatMessage } from '../api/chatApi';
 import { runVariantComplianceCheck } from '../api/complianceApi';
+import { listCampaignDeliveryLogs, sendPayload } from '../api/deliveryApi';
 import { ingestDocument, listDocuments, uploadDocument } from '../api/documentApi';
+import { generateChannelPayloads, getPayloadReadiness, listCampaignPayloads } from '../api/payloadApi';
 import { generateCampaignVariants } from '../api/variantApi';
 import type { CampaignBrief } from '../types/campaign';
 import type { ConversationMessage } from '../types/chat';
 import type { DocumentRecord } from '../types/document';
+import type { DeliveryLog } from '../types/delivery';
+import type { ChannelPayload, PayloadReadiness } from '../types/payload';
 import type { RetrievedContext } from '../types/rag';
 import type { CampaignComplianceSummary as ComplianceSummary, ComplianceResult } from '../types/compliance';
 import type { MessageVariant } from '../types/variant';
@@ -35,7 +43,14 @@ export function CampaignChatPage() {
   const [variants, setVariants] = useState<MessageVariant[]>([]);
   const [complianceByVariantId, setComplianceByVariantId] = useState<Record<string, ComplianceResult>>({});
   const [complianceSummary, setComplianceSummary] = useState<ComplianceSummary | null>(null);
+  const [payloadReadiness, setPayloadReadiness] = useState<PayloadReadiness | null>(null);
+  const [payloads, setPayloads] = useState<ChannelPayload[]>([]);
+  const [deliveryLogs, setDeliveryLogs] = useState<DeliveryLog[]>([]);
+  const [selectedPayloadChannels, setSelectedPayloadChannels] = useState<string[]>(['telegram', 'whatsapp_mock']);
+  const [regeneratePayloads, setRegeneratePayloads] = useState(false);
   const [busyVariantId, setBusyVariantId] = useState<string | null>(null);
+  const [isPayloadGenerating, setIsPayloadGenerating] = useState(false);
+  const [sendingPayloadId, setSendingPayloadId] = useState<string | null>(null);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isContextLoading, setIsContextLoading] = useState(false);
@@ -67,6 +82,7 @@ export function CampaignChatPage() {
       setCampaignId(response.campaign_id);
       setBrief(response.campaign_brief);
       void refreshDocuments(response.campaign_id);
+      void refreshPayloadState(response.campaign_id);
       setMessages((current) => [
         ...current,
         { ...optimisticUserMessage, message_id: response.conversation_message_id },
@@ -103,6 +119,7 @@ export function CampaignChatPage() {
       });
       setVariants(response.variants);
       await refreshComplianceSummary(campaignId);
+      await refreshPayloadState(campaignId);
       if (response.retrieved_contexts?.length) {
         setContexts(response.retrieved_contexts as RetrievedContext[]);
       }
@@ -120,6 +137,22 @@ export function CampaignChatPage() {
       setComplianceSummary(response);
     } catch {
       setComplianceSummary(null);
+    }
+  }
+
+  async function refreshPayloadState(nextCampaignId = campaignId) {
+    if (!nextCampaignId) return;
+    try {
+      const [readinessResponse, payloadResponse, deliveryResponse] = await Promise.all([
+        getPayloadReadiness(nextCampaignId),
+        listCampaignPayloads(nextCampaignId),
+        listCampaignDeliveryLogs(nextCampaignId)
+      ]);
+      setPayloadReadiness(readinessResponse);
+      setPayloads(payloadResponse.payloads);
+      setDeliveryLogs(deliveryResponse.delivery_logs);
+    } catch {
+      setPayloadReadiness(null);
     }
   }
 
@@ -159,6 +192,7 @@ export function CampaignChatPage() {
         current.map((variant) => (variant.variant_id === variantId ? { ...variant, status: response.new_status } : variant))
       );
       await refreshComplianceSummary();
+      await refreshPayloadState();
       return response;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Variant approval failed.');
@@ -176,6 +210,7 @@ export function CampaignChatPage() {
         current.map((variant) => (variant.variant_id === variantId ? { ...variant, status: response.new_status } : variant))
       );
       await refreshComplianceSummary();
+      await refreshPayloadState();
       return response;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Variant rejection failed.');
@@ -250,6 +285,44 @@ export function CampaignChatPage() {
     }
   }
 
+  function handleTogglePayloadChannel(channel: string) {
+    setSelectedPayloadChannels((current) =>
+      current.includes(channel) ? current.filter((item) => item !== channel) : [...current, channel]
+    );
+  }
+
+  async function handleGeneratePayloads() {
+    if (!campaignId) return;
+    setIsPayloadGenerating(true);
+    setError(null);
+    try {
+      const response = await generateChannelPayloads(campaignId, {
+        channels: selectedPayloadChannels,
+        regenerate: regeneratePayloads
+      });
+      setPayloads(response.payloads);
+      await refreshPayloadState(campaignId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Payload generation failed.');
+    } finally {
+      setIsPayloadGenerating(false);
+    }
+  }
+
+  async function handleSendTelegramPayload(payloadId: string) {
+    setSendingPayloadId(payloadId);
+    setError(null);
+    try {
+      await sendPayload(payloadId);
+      await refreshPayloadState();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Telegram send failed.');
+      await refreshPayloadState();
+    } finally {
+      setSendingPayloadId(null);
+    }
+  }
+
   const canGenerate = Boolean(campaignId && brief?.brief_status === 'COMPLETE');
 
   return (
@@ -320,6 +393,27 @@ export function CampaignChatPage() {
         onApprove={handleApproveVariant}
         onReject={handleRejectVariant}
       />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+        <PayloadReadinessPanel readiness={payloadReadiness} />
+        <PayloadGenerationPanel
+          ready={Boolean(payloadReadiness?.ready)}
+          selectedChannels={selectedPayloadChannels}
+          regenerate={regeneratePayloads}
+          loading={isPayloadGenerating}
+          onToggleChannel={handleTogglePayloadChannel}
+          onRegenerateChange={setRegeneratePayloads}
+          onGenerate={() => void handleGeneratePayloads()}
+        />
+      </div>
+
+      <PayloadPreviewPanel
+        payloads={payloads}
+        sendingPayloadId={sendingPayloadId}
+        onSendTelegram={(payloadId) => void handleSendTelegramPayload(payloadId)}
+      />
+
+      <DeliveryLogPanel logs={deliveryLogs} />
     </section>
   );
 }

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str = "replace_me"
     telegram_default_chat_id: str = "replace_me"
+    telegram_chat_id: str = "replace_me"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

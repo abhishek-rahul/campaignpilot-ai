@@ -1,9 +1,11 @@
 from app.db.models.campaign_brief_model import CampaignBrief
 from app.db.models.campaign_manager_model import CampaignManager
 from app.db.models.campaign_model import Campaign
+from app.db.models.channel_payload_model import ChannelPayload
 from app.db.models.conversation_message_model import ConversationMessage
 from app.db.models.brand_document_model import BrandDocument
 from app.db.models.document_chunk_model import DocumentChunk
+from app.db.models.delivery_log_model import DeliveryLog
 from app.db.models.embedding_record_model import EmbeddingRecord
 from app.db.models.approval_model import Approval
 from app.db.models.compliance_result_model import ComplianceResult
@@ -18,8 +20,10 @@ __all__ = [
     "Campaign",
     "CampaignBrief",
     "CampaignManager",
+    "ChannelPayload",
     "ComplianceResult",
     "ConversationMessage",
+    "DeliveryLog",
     "DocumentChunk",
     "EmbeddingRecord",
     "LLMTrace",
