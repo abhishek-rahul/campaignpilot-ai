@@ -7,6 +7,12 @@ import { ChatPanel } from '../components/chat/ChatPanel';
 import { DocumentListPanel } from '../components/documents/DocumentListPanel';
 import { DocumentUploadPanel } from '../components/documents/DocumentUploadPanel';
 import { DeliveryLogPanel } from '../components/delivery/DeliveryLogPanel';
+import { EvaluationHistoryPanel } from '../components/evaluation/EvaluationHistoryPanel';
+import { VariantEvaluationPanel } from '../components/evaluation/VariantEvaluationPanel';
+import { DebugTimelinePanel } from '../components/observability/DebugTimelinePanel';
+import { LlmTraceListPanel } from '../components/observability/LlmTraceListPanel';
+import { ObservabilitySummaryPanel } from '../components/observability/ObservabilitySummaryPanel';
+import { ToolCallLogPanel } from '../components/observability/ToolCallLogPanel';
 import { PayloadGenerationPanel } from '../components/payloads/PayloadGenerationPanel';
 import { PayloadPreviewPanel } from '../components/payloads/PayloadPreviewPanel';
 import { PayloadReadinessPanel } from '../components/payloads/PayloadReadinessPanel';
@@ -22,6 +28,8 @@ import { sendCampaignChatMessage, sendCampaignChatMessageStream } from '../api/c
 import { runVariantComplianceCheck } from '../api/complianceApi';
 import { listCampaignDeliveryLogs, sendPayload } from '../api/deliveryApi';
 import { ingestDocument, listDocuments, uploadDocument } from '../api/documentApi';
+import { listCampaignEvaluations, runCampaignReadinessEvaluation, runVariantEvaluation } from '../api/evaluationApi';
+import { getDebugTimeline, getObservabilitySummary, listLlmTraces, listToolCalls } from '../api/observabilityApi';
 import { generateChannelPayloads, getPayloadReadiness, listCampaignPayloads } from '../api/payloadApi';
 import {
   listCampaignRefinements,
@@ -34,6 +42,8 @@ import type { CampaignBrief } from '../types/campaign';
 import type { ConversationMessage } from '../types/chat';
 import type { DocumentRecord } from '../types/document';
 import type { DeliveryLog } from '../types/delivery';
+import type { EvaluationResult } from '../types/evaluation';
+import type { DebugTimelineEvent, LlmTracePreview, ObservabilitySummary, ToolCallPreview } from '../types/observability';
 import type { ChannelPayload, PayloadReadiness } from '../types/payload';
 import type { RetrievedContext } from '../types/rag';
 import type { CampaignComplianceSummary as ComplianceSummary, ComplianceResult } from '../types/compliance';
@@ -57,6 +67,12 @@ export function CampaignChatPage() {
   const [payloadReadiness, setPayloadReadiness] = useState<PayloadReadiness | null>(null);
   const [payloads, setPayloads] = useState<ChannelPayload[]>([]);
   const [deliveryLogs, setDeliveryLogs] = useState<DeliveryLog[]>([]);
+  const [observabilitySummary, setObservabilitySummary] = useState<ObservabilitySummary | null>(null);
+  const [llmTraces, setLlmTraces] = useState<LlmTracePreview[]>([]);
+  const [toolCalls, setToolCalls] = useState<ToolCallPreview[]>([]);
+  const [debugEvents, setDebugEvents] = useState<DebugTimelineEvent[]>([]);
+  const [evaluations, setEvaluations] = useState<EvaluationResult[]>([]);
+  const [evaluationByVariantId, setEvaluationByVariantId] = useState<Record<string, EvaluationResult>>({});
   const [refinements, setRefinements] = useState<RefinementRecord[]>([]);
   const [latestBriefRefinement, setLatestBriefRefinement] = useState<RefineBriefResponse | null>(null);
   const [streamingText, setStreamingText] = useState('');
@@ -65,6 +81,9 @@ export function CampaignChatPage() {
   const [busyVariantId, setBusyVariantId] = useState<string | null>(null);
   const [isPayloadGenerating, setIsPayloadGenerating] = useState(false);
   const [sendingPayloadId, setSendingPayloadId] = useState<string | null>(null);
+  const [isDebugLoading, setIsDebugLoading] = useState(false);
+  const [evaluatingVariantId, setEvaluatingVariantId] = useState<string | null>(null);
+  const [isReadinessEvaluating, setIsReadinessEvaluating] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -101,6 +120,7 @@ export function CampaignChatPage() {
       void refreshDocuments(response.campaign_id);
       void refreshPayloadState(response.campaign_id);
       void refreshRefinements(response.campaign_id);
+      void refreshDebugData(response.campaign_id);
       setMessages((current) => [
         ...current,
         { ...optimisticUserMessage, message_id: response.conversation_message_id },
@@ -163,6 +183,7 @@ export function CampaignChatPage() {
           void refreshDocuments(streamEvent.data.campaign_id);
           void refreshPayloadState(streamEvent.data.campaign_id);
           void refreshRefinements(streamEvent.data.campaign_id);
+          void refreshDebugData(streamEvent.data.campaign_id);
           setMessage('');
         }
         if (streamEvent.event === 'error') {
@@ -193,6 +214,7 @@ export function CampaignChatPage() {
       setVariants(response.variants);
       await refreshComplianceSummary(campaignId);
       await refreshPayloadState(campaignId);
+      await refreshDebugData(campaignId);
       if (response.retrieved_contexts?.length) {
         setContexts(response.retrieved_contexts as RetrievedContext[]);
       }
@@ -239,6 +261,37 @@ export function CampaignChatPage() {
     }
   }
 
+  async function refreshDebugData(nextCampaignId = campaignId) {
+    if (!nextCampaignId) return;
+    setIsDebugLoading(true);
+    try {
+      const [summaryResponse, traceResponse, toolResponse, timelineResponse, evaluationResponse] = await Promise.all([
+        getObservabilitySummary(nextCampaignId),
+        listLlmTraces(nextCampaignId),
+        listToolCalls(nextCampaignId),
+        getDebugTimeline(nextCampaignId),
+        listCampaignEvaluations(nextCampaignId)
+      ]);
+      setObservabilitySummary(summaryResponse);
+      setLlmTraces(traceResponse.traces);
+      setToolCalls(toolResponse.tool_calls);
+      setDebugEvents(timelineResponse.events);
+      setEvaluations(evaluationResponse.evaluations);
+      setEvaluationByVariantId(
+        evaluationResponse.evaluations.reduce<Record<string, EvaluationResult>>((acc, evaluation) => {
+          if (evaluation.variant_id && !acc[evaluation.variant_id]) {
+            acc[evaluation.variant_id] = evaluation;
+          }
+          return acc;
+        }, {})
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Debug data refresh failed.');
+    } finally {
+      setIsDebugLoading(false);
+    }
+  }
+
   async function handleRunCompliance(variantId: string) {
     setBusyVariantId(variantId);
     setError(null);
@@ -259,6 +312,7 @@ export function CampaignChatPage() {
         )
       );
       await refreshComplianceSummary();
+      await refreshDebugData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Compliance check failed.');
     } finally {
@@ -276,6 +330,7 @@ export function CampaignChatPage() {
       );
       await refreshComplianceSummary();
       await refreshPayloadState();
+      await refreshDebugData();
       return response;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Variant approval failed.');
@@ -294,6 +349,7 @@ export function CampaignChatPage() {
       );
       await refreshComplianceSummary();
       await refreshPayloadState();
+      await refreshDebugData();
       return response;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Variant rejection failed.');
@@ -385,6 +441,7 @@ export function CampaignChatPage() {
       });
       setPayloads(response.payloads);
       await refreshPayloadState(campaignId);
+      await refreshDebugData(campaignId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Payload generation failed.');
     } finally {
@@ -398,6 +455,7 @@ export function CampaignChatPage() {
     try {
       await sendPayload(payloadId);
       await refreshPayloadState();
+      await refreshDebugData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Telegram send failed.');
       await refreshPayloadState();
@@ -420,6 +478,7 @@ export function CampaignChatPage() {
       setBrief(response.after_brief);
       await refreshRefinements(campaignId);
       await refreshPayloadState(campaignId);
+      await refreshDebugData(campaignId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Brief refinement failed.');
     } finally {
@@ -438,6 +497,7 @@ export function CampaignChatPage() {
       });
       setVariants((current) => [...current, response.refined_variant]);
       await refreshRefinements(response.campaign_id);
+      await refreshDebugData(response.campaign_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Variant refinement failed.');
     } finally {
@@ -458,10 +518,39 @@ export function CampaignChatPage() {
       });
       setVariants((current) => [...current, ...response.variants]);
       await refreshRefinements(campaignId);
+      await refreshDebugData(campaignId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Variant regeneration failed.');
     } finally {
       setIsRefiningVariant(false);
+    }
+  }
+
+  async function handleRunVariantEvaluation(variantId: string) {
+    setEvaluatingVariantId(variantId);
+    setError(null);
+    try {
+      const response = await runVariantEvaluation(variantId);
+      setEvaluationByVariantId((current) => ({ ...current, [variantId]: response }));
+      await refreshDebugData(response.campaign_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Variant evaluation failed.');
+    } finally {
+      setEvaluatingVariantId(null);
+    }
+  }
+
+  async function handleRunReadinessEvaluation() {
+    if (!campaignId) return;
+    setIsReadinessEvaluating(true);
+    setError(null);
+    try {
+      await runCampaignReadinessEvaluation(campaignId);
+      await refreshDebugData(campaignId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Readiness evaluation failed.');
+    } finally {
+      setIsReadinessEvaluating(false);
     }
   }
 
@@ -563,6 +652,31 @@ export function CampaignChatPage() {
       </div>
 
       <RefinementHistoryPanel refinements={refinements} />
+
+      <ObservabilitySummaryPanel
+        summary={observabilitySummary}
+        loading={isDebugLoading}
+        onRefresh={() => refreshDebugData()}
+      />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+        <LlmTraceListPanel traces={llmTraces} />
+        <ToolCallLogPanel toolCalls={toolCalls} />
+      </div>
+
+      <VariantEvaluationPanel
+        variants={variants}
+        latestByVariantId={evaluationByVariantId}
+        busyVariantId={evaluatingVariantId}
+        onEvaluate={handleRunVariantEvaluation}
+        onEvaluateReadiness={handleRunReadinessEvaluation}
+        readinessLoading={isReadinessEvaluating}
+      />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+        <EvaluationHistoryPanel evaluations={evaluations} />
+        <DebugTimelinePanel events={debugEvents} />
+      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
         <PayloadReadinessPanel readiness={payloadReadiness} />

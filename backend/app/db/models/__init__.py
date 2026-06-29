@@ -8,6 +8,7 @@ from app.db.models.brand_document_model import BrandDocument
 from app.db.models.document_chunk_model import DocumentChunk
 from app.db.models.delivery_log_model import DeliveryLog
 from app.db.models.embedding_record_model import EmbeddingRecord
+from app.db.models.evaluation_result_model import EvaluationResult
 from app.db.models.approval_model import Approval
 from app.db.models.compliance_result_model import ComplianceResult
 from app.db.models.llm_trace_model import LLMTrace
@@ -28,6 +29,7 @@ __all__ = [
     "DeliveryLog",
     "DocumentChunk",
     "EmbeddingRecord",
+    "EvaluationResult",
     "LLMTrace",
     "MessageVariant",
     "RetrievedContext",
